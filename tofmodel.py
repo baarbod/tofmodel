@@ -5,6 +5,7 @@ Created on Fri Jan 13 10:41:44 2023
 @author: Baarbod
 """
 
+m2 = 10
 import math
 import time
 import numpy as np
