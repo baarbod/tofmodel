@@ -69,14 +69,10 @@ def run_tof_model(v0, scan_param):
     
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
     
-    # Simulation time vector
-    div = 20
-    tmax = TR*npulse
-    t = np.arange(0, tmax, TR/div)
-    
     # Initialize protons for simulation
+    dummyt = np.arange(0, TR*npulse, TR/20)
     x0 = 0
-    X = compute_position(t, x0, v0)
+    X = compute_position(dummyt, x0, v0)
     dx = 0.01
     X0array = np.arange(-max(X), nslice*w, dx)
     nproton = np.size(X0array)
