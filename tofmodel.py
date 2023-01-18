@@ -66,7 +66,9 @@ def run_tof_model(v0, scan_param):
     nslice = scan_param['num_slice']
     npulse = scan_param['num_pulse']
     alpha = np.array(scan_param['alpha_list'], ndmin=2).T
-
+    
+    assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
+    
     # Simulation time vector
     div = 20
     tmax = TR*npulse
