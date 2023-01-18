@@ -7,7 +7,6 @@ Created on Fri Jan 13 10:41:44 2023
 m1 = 10
 
 
-m2 = 10
 import math
 import time
 import numpy as np
