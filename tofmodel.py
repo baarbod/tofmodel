@@ -4,6 +4,8 @@ Created on Fri Jan 13 10:41:44 2023
 
 @author: Baarbod
 """
+m1 = 10
+
 
 import math
 import time
