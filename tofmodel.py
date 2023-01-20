@@ -113,7 +113,7 @@ def run_tof_model(v0, scan_param):
         # Convert absolute positions to slice location
         proton_slice = np.floor(proton_position/w)
         
-        # Find pulses that this proton recieved (i.e. in a slice that recieved one)
+        # Find pulses that this proton recieved
         match_cond = pulse_slice == proton_slice
         pulse_recieve_ind = np.where(match_cond)[0]
         
