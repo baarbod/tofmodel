@@ -7,6 +7,7 @@ Created on Wed Jan 18 16:24:53 2023
 
 import numpy as np
 from functools import partial 
+import matplotlib.pyplot as plt
 
 def model(Xfunc, t):
     x = Xfunc(t, 0)
@@ -47,20 +48,23 @@ def compute_position_fourier(t, x0, An, Bn, w0):
     return A0*t/2 + term + k
 
 
-
-
-#Xfunc = partial(compute_position_constant, v0=0.5)
+Xfunc = partial(compute_position_constant, v0=0.5)
 #Xfunc = partial(compute_position_sine, v0=0.5)
 
 # Run model using X function
-t = np.arange(0, 10, 0.1)
-#x = model(Xfunc, t)
+t = np.arange(0, 100, 0.1)
+x = model(Xfunc, t)
 
-x0 = 0
-An = [0, 0.2, 0.3]
-Bn = [0.1, 0.4]
-w0 = 2*np.pi/5
-X = compute_position_fourier(t, x0, An, Bn, w0)
+# Plot slice signals
+plt.plot(t, x)
+plt.show()
+
+
+# x0 = 0
+# An = [0, 0.2, 0.3]
+# Bn = [0.1, 0.4]
+# w0 = 2*np.pi/5
+# X = compute_position_fourier(t, x0, An, Bn, w0)
 
 
 
