@@ -9,22 +9,9 @@ import math
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-import test_input_func as infunc
+import posfunclib as pfl
 from functools import partial 
 import input_handler as ih
-
-# Position as a function of time
-def compute_position(t, x0, v0):
-    #X = v0*t + x0
-    
-    v1 = 0
-    v2 = v0
-    Amp = (v2-v1)/2
-    A0 = (v1 + Amp)*2
-    An = Amp
-    w0 = 2*math.pi/5
-    X = A0*t/2 + An/w0*np.sin(w0*t) + x0 
-    return X
 
 # Define equation for flow-enhanced fMRI signal
 def fre_signal(n, fa, TR, T1, dt_list):
@@ -46,15 +33,6 @@ def fre_signal(n, fa, TR, T1, dt_list):
         for m in range(n-1):
             negative_series[m] = C**m * np.prod(E[1:n-1])/np.prod(E[1:n-m-2])
         Mzn_pre = M0 * (np.sum(positive_series) - np.sum(negative_series))
-    
-    # if n == 1:
-    #     Mzn_pre = M0*C
-    # else:
-    #     temp = np.empty(n)
-    #     for m in range(n):
-    #         # SOMETHING WRONG HERE. DOUBLE CHECK DERIVATIONS FIRST
-    #         temp[m] = C**m * np.prod(E[n-m:n-1])*(1 - E[n-m-1])
-    #     Mzn_pre = M0*C * np.sum(temp)
         
     S = np.sin(fa)*(Mzn_pre - Mzss)
     return S
@@ -148,24 +126,28 @@ def run_tof_model(scan_param, Xfunc):
     return signal
 
 
-# Velocity input amplitude
-#Xfunc = partial(infunc.compute_position_constant, v0=0.5)
-Xfunc = partial(infunc.compute_position_sine, v0=0.5)
+# Position functions
+#Xfunc = partial(pfl.compute_position_constant, v0=0.1)
+Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.2, w0=2*np.pi/5)
 
-scan_param = ih.input_from_json('test_scan.json')
+# An = [0.2, 0.1]
+# Bn = [0*0.1]
+# w0 = 2*np.pi/5
+# Xfunc = partial(pfl.compute_position_fourier, An=An, Bn=Bn, w0=w0)
+
+#scan_param = ih.input_from_json('test_scan.json')
 
 # Dictionary containing model parameters
-# scan_param =	{
-#     'slice_width' : 0.25,
-#     'repetition_time' : 0.35,
-#     'flip_angle' : 47,
-#     't1_time' : 4,
-#     'num_slice' : 5,
-#     'num_pulse' : 100,
-#     'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
+scan_param =	{
+    'slice_width' : 0.25,
+    'repetition_time' : 0.35,
+    'flip_angle' : 47,
+    't1_time' : 4,
+    'num_slice' : 5,
+    'num_pulse' : 100,
+    'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
 
 signal = run_tof_model(scan_param, Xfunc)
-
 
 # Plot slice signals
 plt.plot(signal)
