@@ -17,7 +17,7 @@ def input_from_json(json_name):
     data = json.load(f)
       
     scan_param = {}
-    scan_param['slice_width'] = data['SliceThickness']
+    scan_param['slice_width'] = data['SliceThickness']/10
     scan_param['repetition_time'] = data['RepetitionTime']
     scan_param['flip_angle'] = data['FlipAngle']
     scan_param['t1_time'] = 4 # default for water

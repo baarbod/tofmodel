@@ -149,8 +149,8 @@ def run_tof_model(scan_param, Xfunc):
 
 
 # Velocity input amplitude
-Xfunc = partial(infunc.compute_position_constant, v0=0.5)
-#Xfunc = partial(compute_position_sine, v0=0.5)
+#Xfunc = partial(infunc.compute_position_constant, v0=0.5)
+Xfunc = partial(infunc.compute_position_sine, v0=0.5)
 
 scan_param = ih.input_from_json('test_scan.json')
 
