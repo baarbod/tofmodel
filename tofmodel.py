@@ -9,6 +9,9 @@ import math
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+import test_input_func as infunc
+from functools import partial 
+import input_handler as ih
 
 # Position as a function of time
 def compute_position(t, x0, v0):
@@ -56,7 +59,7 @@ def fre_signal(n, fa, TR, T1, dt_list):
     S = np.sin(fa)*(Mzn_pre - Mzss)
     return S
 
-def run_tof_model(v0, scan_param):
+def run_tof_model(scan_param, Xfunc):
     
     # Scan parameters (should be function input)
     w = scan_param['slice_width']
@@ -72,7 +75,7 @@ def run_tof_model(v0, scan_param):
     # Initialize protons for simulation
     dummyt = np.arange(0, TR*npulse, TR/20)
     x0 = 0
-    X = compute_position(dummyt, x0, v0)
+    X = Xfunc(dummyt, x0)
     dx = 0.01
     X0array = np.arange(-max(X), nslice*w, dx)
     nproton = np.size(X0array)
@@ -108,7 +111,7 @@ def run_tof_model(v0, scan_param):
         
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
-        proton_position = compute_position(timings, init_pos, v0)
+        proton_position = Xfunc(timings, init_pos)
         
         # Convert absolute positions to slice location
         proton_slice = np.floor(proton_position/w)
@@ -146,19 +149,22 @@ def run_tof_model(v0, scan_param):
 
 
 # Velocity input amplitude
-v0 = 0.7
+Xfunc = partial(infunc.compute_position_constant, v0=0.5)
+#Xfunc = partial(compute_position_sine, v0=0.5)
+
+scan_param = ih.input_from_json('test_scan.json')
 
 # Dictionary containing model parameters
-scan_param =	{
-    'slice_width' : 0.25,
-    'repetition_time' : 0.35,
-    'flip_angle' : 47,
-    't1_time' : 4,
-    'num_slice' : 5,
-    'num_pulse' : 100,
-    'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
+# scan_param =	{
+#     'slice_width' : 0.25,
+#     'repetition_time' : 0.35,
+#     'flip_angle' : 47,
+#     't1_time' : 4,
+#     'num_slice' : 5,
+#     'num_pulse' : 100,
+#     'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
 
-signal = run_tof_model(v0, scan_param)
+signal = run_tof_model(scan_param, Xfunc)
 
 
 # Plot slice signals

@@ -24,7 +24,11 @@ def input_from_json(json_name):
     scan_param['num_pulse'] = 100 # default
     scan_param['alpha_list'] = data['SliceTiming']
     scan_param['num_slice'] = 10 # default
-      
+    
+    alpha_list = scan_param['alpha_list']
+    scan_param['alpha_list'] = alpha_list[0:scan_param['num_slice']]
+    
+    
     # Closing file
     f.close()
     
