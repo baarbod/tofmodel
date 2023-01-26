@@ -12,34 +12,11 @@ import matplotlib.pyplot as plt
 import posfunclib as pfl
 from functools import partial 
 import input_handler as ih
-
-# Define equation for flow-enhanced fMRI signal
-def fre_signal(n, fa, TR, T1, dt_list):
-    # e1 = math.exp(-TR/T1)
-    # S = math.sin(fa)*(e1*math.cos(fa))**(n-1)*(1 - (1-e1)/(1-e1*math.cos(fa)))
-    
-    M0 = 1
-    C = np.cos(fa)
-    Mzss = M0*(1 - math.exp(-TR/T1)) / (1 - math.exp(-TR/T1)*C)
-    positive_series = np.zeros(n)
-    negative_series = np.zeros(n)
-    E = np.exp(-dt_list/T1)
-    
-    if n == 1:
-        Mzn_pre = M0*C
-    else:
-        for m in range(n):
-            positive_series[m] = C**m * np.prod(E[1:n-1])/np.prod(E[1:n-m-1]) 
-        for m in range(n-1):
-            negative_series[m] = C**m * np.prod(E[1:n-1])/np.prod(E[1:n-m-2])
-        Mzn_pre = M0 * (np.sum(positive_series) - np.sum(negative_series))
-        
-    S = np.sin(fa)*(Mzn_pre - Mzss)
-    return S
+from fre_signal import fre_signal
 
 def run_tof_model(scan_param, Xfunc):
     
-    # Scan parameters (should be function input)
+    # Scan parameters
     w = scan_param['slice_width']
     TR = scan_param['repetition_time']
     fa = scan_param['flip_angle']*math.pi/180
@@ -100,7 +77,7 @@ def run_tof_model(scan_param, Xfunc):
         
         # Loop through recieved pulses and compute flow signal
         tprev = float('nan')
-        dt_list = np.empty(np.size(pulse_recieve_ind))
+        dt_list = np.zeros(np.size(pulse_recieve_ind))
         for count, pulse_id in enumerate(pulse_recieve_ind):
              tnow = timings[pulse_id]
              dt = tnow - tprev # correct dt behavior on 1st pulse
@@ -144,14 +121,14 @@ scan_param =	{
     'flip_angle' : 47,
     't1_time' : 4,
     'num_slice' : 5,
-    'num_pulse' : 100,
+    'num_pulse' : 200,
     'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
 
 signal = run_tof_model(scan_param, Xfunc)
 
-# Plot slice signals
-plt.plot(signal)
-plt.show()
+# # Plot slice signals
+# plt.plot(signal)
+# plt.show()
 
 
 
