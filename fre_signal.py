@@ -10,7 +10,6 @@ import numpy as np
 import operator
 import functools
 
-
 # Define equation for flow-enhanced fMRI signal
 def fre_signal(n, fa, TR, T1, dt_list):
     # e1 = math.exp(-TR/T1)
@@ -23,6 +22,8 @@ def fre_signal(n, fa, TR, T1, dt_list):
     series = np.zeros(n-1)
     E = np.exp(-dt_list/T1)
     
+    
+    # try storing each series in matrix and do prod once at the end
     
     E_full = functools.reduce(operator.mul, E[1:n], 1)
     for m in range(n-1):

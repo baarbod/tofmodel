@@ -5,18 +5,21 @@ Created on Wed Jan 25 15:38:00 2023
 @author: Baarbod
 """
 
+# test fre signal equation. it should give the same result as the simpler 
+# expression that assumes all relaxation times are TR. 
+
 from fre_signal import fre_signal
 import numpy as np
 import matplotlib.pyplot as plt
 
 
 #n = 9
-n = 4
+n = 6
 fa = 47*np.pi/180
 TR = 0.35
 T1 = 4
 #dt_list = np.array([float('nan'), 0.2, 0.3, 0.23, 0.4, 0.323, 0.28, 0.16, 0.62])
-dt_list = np.array([float('nan'), TR, TR, TR])
+dt_list = np.array([float('nan'), TR, TR, TR, TR, TR])
 M0 = 1
 
 S1 = np.zeros(n)
