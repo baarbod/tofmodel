@@ -105,7 +105,7 @@ def run_tof_model(scan_param, Xfunc):
 
 # Position functions
 #Xfunc = partial(pfl.compute_position_constant, v0=0.1)
-Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.2, w0=2*np.pi/5)
+Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.5, w0=2*np.pi/5)
 
 # An = [0.2, 0.1]
 # Bn = [0*0.1]
@@ -121,7 +121,7 @@ scan_param =	{
     'flip_angle' : 47,
     't1_time' : 4,
     'num_slice' : 5,
-    'num_pulse' : 200,
+    'num_pulse' : 100,
     'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
 
 signal = run_tof_model(scan_param, Xfunc)
