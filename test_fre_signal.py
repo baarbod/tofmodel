@@ -9,6 +9,7 @@ Created on Wed Jan 25 15:38:00 2023
 # expression that assumes all relaxation times are TR. 
 
 from fre_signal import fre_signal
+from fre_signal_array import fre_signal as fre_signal2
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -22,6 +23,12 @@ T1 = 4
 dt_list = np.array([float('nan'), TR, TR, TR, TR, TR])
 M0 = 1
 
+
+# test typical case
+#S = fre_signal(n, fa, TR, T1, dt_list)
+S = fre_signal2(n, fa, TR, T1, dt_list)
+
+# test against other formulation 
 S1 = np.zeros(n)
 S2 = np.zeros(n)
 for ipulse in range(n):

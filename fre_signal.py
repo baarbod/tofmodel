@@ -31,7 +31,7 @@ def fre_signal(n, fa, TR, T1, dt_list):
         # removed the -1 from indexing in order to include last element
         den = functools.reduce(operator.mul, E[1:n-m], 1)
         series[m] = C**(m) * num/den
-    
+                
     Mzn_pre = M0 * E_full * (np.sum(series) + C**(n-1))
         
     S = np.sin(fa)*(Mzn_pre - Mzss)
