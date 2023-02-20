@@ -12,7 +12,8 @@ import matplotlib.pyplot as plt
 import posfunclib as pfl
 from functools import partial 
 import input_handler as ih
-from fre_signal import fre_signal
+#from fre_signal import fre_signal
+from fre_signal import fre_signal_array as fre_signal
 
 def run_tof_model(scan_param, Xfunc):
     
@@ -105,7 +106,7 @@ def run_tof_model(scan_param, Xfunc):
 
 # Position functions
 #Xfunc = partial(pfl.compute_position_constant, v0=0.1)
-Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.5, w0=2*np.pi/5)
+Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.4, w0=2*np.pi/5)
 
 # An = [0.2, 0.1]
 # Bn = [0*0.1]
