@@ -53,6 +53,7 @@ def compute_position_fourier(t, x0, An, Bn, w0):
     
     An = np.reshape(An, (N, 1))
     Bn = np.reshape(Bn, (N, 1))
+    w0 = np.reshape(w0, (N, 1))
     Nvect = np.reshape(Nvect, (N, 1))
     k = np.sum(Bn/(w0*Nvect)) + x0
     if N == 1:
