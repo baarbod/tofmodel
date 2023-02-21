@@ -86,17 +86,17 @@ def compute_position_fourier_spatial(t_eval, x0, An, Bn, w0):
         term = term.squeeze()
         
         pos_term = k*(r1/(m*x + r1))**4
-        time_term = term  + kk
+        time_term = A0 + term  + kk
         state = pos_term * time_term 
         return state
     
     k = 1
-    m = 0*0.5
+    m = 0.1
     r1 = 1
     p = (k, m, r1, An, Bn, w0)
     
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(F, trange, [x0], args=p, t_eval=t_eval)
+    sol = solve_ivp(F, trange, [x0], args=p, t_eval=t_eval, method='Radau')
     return  sol.y[0]
 
 

@@ -20,6 +20,7 @@ def run_tof_model(scan_param, Xfunc):
     T1 = scan_param['t1_time']
     nslice = scan_param['num_slice']
     npulse = scan_param['num_pulse']
+    MBF = scan_param['MBF']
     alpha = np.array(scan_param['alpha_list'], ndmin=2).T
     
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
@@ -64,7 +65,7 @@ def run_tof_model(scan_param, Xfunc):
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
         proton_position_no_repeats = Xfunc(np.unique(timings), init_pos)
-        proton_position = np.repeat(proton_position_no_repeats, 2)
+        proton_position = np.repeat(proton_position_no_repeats, MBF)
         
         # Convert absolute positions to slice location
         proton_slice = np.floor(proton_position/w)
