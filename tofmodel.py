@@ -67,7 +67,8 @@ def run_tof_model(scan_param, Xfunc):
         
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
-        proton_position = Xfunc(timings, init_pos)
+        proton_position_no_repeats = Xfunc(np.unique(timings), init_pos)
+        proton_position = np.repeat(proton_position_no_repeats, 2)
         
         # Convert absolute positions to slice location
         proton_slice = np.floor(proton_position/w)
@@ -106,7 +107,9 @@ def run_tof_model(scan_param, Xfunc):
 
 # Position functions
 #Xfunc = partial(pfl.compute_position_constant, v0=0.1)
-Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
+#Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
+#Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.5, w0=2*np.pi/5)
+Xfunc = partial(pfl.compute_position_sine_spatial, v1=-0.5, v2=0.5, w0=2*np.pi/5)
 
 # An = [0.2, 0.1]
 # Bn = [0*0.1]
