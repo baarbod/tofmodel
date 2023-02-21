@@ -11,22 +11,26 @@ from scipy.integrate import solve_ivp
 
 plt.style.use('seaborn-poster')
 
-def F(t, s0):
-    return np.cos(t)
+def F(t, x, k, m, r1):
+    return k*(r1/(m*x + r1))**2 * np.cos(t*2*np.pi/5)
 
-#F = lambda t, s: np.cos(t)
+k = 2*0.5
+m = 0*0.5
+r1 = 1
+p = (k, m, r1)
 
-t_eval = np.arange(0, np.pi, 0.1)
-sol = solve_ivp(F, [0, np.pi], [0], t_eval=t_eval)
+t_eval = np.arange(0, 30, 0.1)
+sol = solve_ivp(F, [0, 30], [0], args=p, t_eval=t_eval)
 
 plt.figure(figsize = (12, 4))
 plt.subplot(121)
 plt.plot(sol.t, sol.y[0])
 plt.xlabel('t')
-plt.ylabel('S(t)')
+plt.ylabel('x(t)')
 plt.subplot(122)
-plt.plot(sol.t, sol.y[0] - np.sin(sol.t))
+v = np.diff(sol.y[0])/np.mean(np.diff(t_eval))
+plt.plot(sol.t[1:], v)
 plt.xlabel('t')
-plt.ylabel('S(t) - sin(t)')
+plt.ylabel('v(t)')
 plt.tight_layout()
 plt.show()
