@@ -56,7 +56,7 @@ def fre_signal_array(n, fa, TR, T1, dt_list):
         S = np.sin(fa)*(Mzn_pre - Mzss)
     else:    
         # call prod function on full array
-        full_array_prod = functools.reduce(operator.mul, full_array)
+        full_array_prod = functools.reduce(operator.mul, full_array.T)
         mm = np.arange(0, n-1)
         nummat = 1 - E[n - mm - 1]
         final_mat = C**mm * nummat/full_array_prod

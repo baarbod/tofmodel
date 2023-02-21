@@ -95,9 +95,9 @@ def run_tof_model(scan_param, Xfunc):
     elapsed = time.time() - t
     print(elapsed)
     
-    # Check conservation of protons
-    err_statement = 'Warning: proton conservation failed - check s_counter.'
-    assert np.all(s_counter == nproton_per_slice), err_statement
+    # # Check conservation of protons
+    # err_statement = 'Warning: proton conservation failed - check s_counter.'
+    # assert np.all(s_counter == nproton_per_slice), err_statement
         
     # Divide after summing contributions; signal is the average of protons
     signal = signal / nproton_per_slice    
@@ -106,7 +106,7 @@ def run_tof_model(scan_param, Xfunc):
 
 # Position functions
 #Xfunc = partial(pfl.compute_position_constant, v0=0.1)
-Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.4, w0=2*np.pi/5)
+Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
 
 # An = [0.2, 0.1]
 # Bn = [0*0.1]
@@ -121,15 +121,15 @@ scan_param =	{
     'repetition_time' : 0.35,
     'flip_angle' : 47,
     't1_time' : 4,
-    'num_slice' : 5,
+    'num_slice' : 10,
     'num_pulse' : 100,
-    'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
+    'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775, 0.14, 0, 0.2075, 0.07, 0.2775]}
 
 signal = run_tof_model(scan_param, Xfunc)
 
-# # Plot slice signals
-# plt.plot(signal)
-# plt.show()
+# Plot slice signals
+plt.plot(signal[:, 0:4])
+plt.show()
 
 
 

@@ -16,8 +16,8 @@ import time
 fa = 47*np.pi/180
 TR = 0.35
 T1 = 4
-#dt_list = np.array([float('nan'), 0.2, 0.3, 0.23, 0.4, 0.323, 0.28, 0.16, 0.62, 0.2, 0.3, 0.23, 0.4, 0.323, 0.28, 0.16, 0.62, 0.2, 0.3, 0.23, 0.4, 0.323, 0.28, 0.16, 0.62])
-dt_list = np.array([float('nan'), TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR])
+dt_list = np.array([float('nan'), 0.2, 4, 0.3, 4, 0.23, 4, 0.4])
+#dt_list = np.array([float('nan'), TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR, TR])
 #dt_list = np.array([float('nan')])
 n = len(dt_list)
 M0 = 1
