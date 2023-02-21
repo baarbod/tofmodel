@@ -108,7 +108,7 @@ def run_tof_model(scan_param, Xfunc):
 # Position functions
 #Xfunc = partial(pfl.compute_position_constant, v0=0.1)
 #Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
-#Xfunc = partial(pfl.compute_position_sine, v1=0, v2=0.5, w0=2*np.pi/5)
+#Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
 Xfunc = partial(pfl.compute_position_sine_spatial, v1=-0.5, v2=0.5, w0=2*np.pi/5)
 
 # An = [0.2, 0.1]

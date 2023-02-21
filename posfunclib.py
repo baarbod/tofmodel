@@ -29,12 +29,12 @@ def compute_position_sine_spatial(t_eval, x0, v1, v2, w0):
         Amp = (v2-v1)/2
         A0 = (v1 + Amp)*2
         An = Amp
-        pos_term = k*(r1/(m*x + r1))**2
+        pos_term = k*(r1/(m*x + r1))**4
         time_term = A0/2 + An*np.cos(w0*t) 
         state = pos_term * time_term 
         return state
     
-    k = 2*0.5
+    k = 1
     m = 0*0.5
     r1 = 1
     p = (k, m, r1, v1, v2, w0)

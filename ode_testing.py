@@ -12,7 +12,7 @@ from scipy.integrate import solve_ivp
 plt.style.use('seaborn-poster')
 
 def F(t, x, k, m, r1):
-    return k*(r1/(m*x + r1))**2 * np.cos(t*2*np.pi/5)
+    return k*(r1/(m*x + r1))**4 * np.cos(t*2*np.pi/5)
 
 k = 2*0.5
 m = 0*0.5
