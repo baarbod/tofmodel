@@ -29,12 +29,11 @@ def compute_position_fourier(t, x0, An, Bn, w0):
     An = np.array(An[1:])
     Bn = np.array(Bn)
     N = np.size(An)
-    Nvect = np.arange(1, N+1, 1)
+    Nvect = np.ones((N, 1))
     
     An = np.reshape(An, (N, 1))
     Bn = np.reshape(Bn, (N, 1))
     w0 = np.reshape(w0, (N, 1))
-    Nvect = np.reshape(Nvect, (N, 1))
     k = np.sum(Bn/(w0*Nvect)) + x0
     if N == 1:
         term = An/w0*np.sin(w0*t) - Bn/w0*np.cos(w0*t)
@@ -71,12 +70,11 @@ def compute_position_fourier_spatial(t_eval, x0, An, Bn, w0):
         An = np.array(An[1:])
         Bn = np.array(Bn)
         N = np.size(An)
-        Nvect = np.arange(1, N+1, 1)
+        Nvect = np.ones((N, 1))
         
         An = np.reshape(An, (N, 1))
         Bn = np.reshape(Bn, (N, 1))
         w0 = np.reshape(w0, (N, 1))
-        Nvect = np.reshape(Nvect, (N, 1))
         kk = np.sum(Bn/(w0*Nvect))
         if N == 1:
             term = An*np.cos(w0*t) + Bn*np.sin(w0*t)
@@ -86,12 +84,13 @@ def compute_position_fourier_spatial(t_eval, x0, An, Bn, w0):
         term = term.squeeze()
         
         pos_term = k*(r1/(m*x + r1))**4
+        pos_term = np.heaviside(x, 1)*pos_term + np.heaviside(-x, 1)    
         time_term = A0 + term  + kk
         state = pos_term * time_term 
         return state
     
     k = 1
-    m = 0.1
+    m = 0.2
     r1 = 1
     p = (k, m, r1, An, Bn, w0)
     
