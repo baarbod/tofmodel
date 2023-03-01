@@ -49,13 +49,14 @@ def compute_position_sine_spatial(t_eval, x0, v1, v2, w0):
         Amp = (v2-v1)/2
         A0 = (v1 + Amp)*2
         An = Amp
-        pos_term = k*(r1/(m*x + r1))**4
+        pos_term = k*(r1/(m*x + r1))**2
+        pos_term = np.heaviside(x, 0)*pos_term + np.heaviside(-x, 1) 
         time_term = A0/2 + An*np.cos(w0*t) 
         state = pos_term * time_term 
         return state
     
     k = 1
-    m = 0*0.5
+    m = 0.2
     r1 = 1
     p = (k, m, r1, v1, v2, w0)
     
@@ -83,14 +84,14 @@ def compute_position_fourier_spatial(t_eval, x0, An, Bn, w0):
             term = np.sum(tt, axis=0)
         term = term.squeeze()
         
-        pos_term = k*(r1/(m*x + r1))**4
-        pos_term = np.heaviside(x, 1)*pos_term + np.heaviside(-x, 1)    
+        pos_term = k*(r1/(m*x + r1))**2
+        pos_term = np.heaviside(x, 0)*pos_term + np.heaviside(-x, 1)    
         time_term = A0 + term  + kk
         state = pos_term * time_term 
         return state
     
     k = 1
-    m = 0.2
+    m = 0.1
     r1 = 1
     p = (k, m, r1, An, Bn, w0)
     
