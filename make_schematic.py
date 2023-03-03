@@ -13,6 +13,28 @@ import posfunclib as pfl
 
 plt.close('all')
 
+def main():
+    fig, ax = make_base_plot()
+    draw_pulse_lines(ax)
+    
+    w = 0.25
+    xr = 10
+    add_slice_shade(ax, w, 1, xr, 'C0')
+    add_slice_shade(ax, w, 2, xr, 'C1')
+    add_slice_shade(ax, w, 3, xr, 'C3')
+    
+    
+    Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
+    t_eval= np.arange(0, 10, 0.01)
+    x1 = Xfunc(t_eval, 0)
+    ax.plot(t_eval, x1)
+    
+    x2 = Xfunc(t_eval, 0.25)
+    ax.plot(t_eval, x2)
+    
+    x3 = Xfunc(t_eval, 0.5)
+    ax.plot(t_eval, x3)
+
 def make_base_plot():
     fig, ax = plt.subplots()
     return fig, ax
@@ -24,38 +46,18 @@ def add_slice_shade(ax, w, islice, xr, c):
     x2 = xr
     ax.fill_betweenx(y, x1, x2, step='post', color=c, alpha=0.3)
     
-# def draw_pulse_lines():
-    
+def draw_pulse_lines(ax):
+    trlist = np.arange(0, 10, 0.25)
+    for tr in trlist:
+        line = lines.Line2D([tr, tr], [0, 0.75],
+                            lw=1, alpha=0.5, color='black', axes=ax)
+        ax.add_line(line)
 
-    
 # def draw_trajectory():
     
 
-fig, ax = make_base_plot()
-
-w = 0.25
-xr = 10
-add_slice_shade(ax, w, 1, xr, 'C0')
-add_slice_shade(ax, w, 2, xr, 'C1')
-add_slice_shade(ax, w, 3, xr, 'C3')
 
 
-Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
-t_eval= np.arange(0, 10, 0.01)
-x1 = Xfunc(t_eval, 0)
-ax.plot(t_eval, x1)
-
-x2 = Xfunc(t_eval, 0.25)
-ax.plot(t_eval, x2)
-
-x3 = Xfunc(t_eval, 0.5)
-ax.plot(t_eval, x3)
-
-trlist = np.arange(0, 10, 0.25)
-for tr in trlist:
-    line = lines.Line2D([tr, tr], [0, 0.75],
-                        lw=1, alpha=0.5, color='black', axes=ax)
-    ax.add_line(line)
-
-
+if __name__ == "__main__":
+   main()
 
