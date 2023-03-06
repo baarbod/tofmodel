@@ -99,9 +99,12 @@ def compute_position_fourier_spatial(t_eval, x0, An, Bn, w0):
     sol = solve_ivp(F, trange, [x0], args=p, t_eval=t_eval, method='Radau')
     return  sol.y[0]
 
-
-
-
+def compute_position_resp(t_eval, x0, An, Bn, w0):
+    
+    N = np.size(w0)
+    x=An[0]/2.+sum([An[k+1]*np.cos(w0[k]*t_eval)+Bn[k]*np.sin(w0[k]*t_eval) 
+                   for k in range(0,N)])
+    return x
 
 
 
