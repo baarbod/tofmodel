@@ -11,28 +11,11 @@ import numpy as np
 #from fre_signal import fre_signal
 from fre_signal import fre_signal_array as fre_signal
 
-def run_tof_model(scan_param, Xfunc):
-    
-    # Scan parameters
-    w = scan_param['slice_width']
+def get_pulse_targets(scan_param):
     TR = scan_param['repetition_time']
-    fa = scan_param['flip_angle']*math.pi/180
-    T1 = scan_param['t1_time']
     nslice = scan_param['num_slice']
     npulse = scan_param['num_pulse']
-    MBF = scan_param['MBF']
     alpha = np.array(scan_param['alpha_list'], ndmin=2).T
-    
-    assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
-    
-    # Initialize protons for simulation
-    dummyt = np.arange(0, TR*npulse, TR/20)
-    x0 = 0
-    X = Xfunc(dummyt, x0)
-    dx = 0.01
-    X0array = np.arange(-max(X), nslice*w, dx)
-    nproton = np.size(X0array)
-    nproton_per_slice = int(w / dx)
     
     # Define list of tuples defining pulse timings and corresponding target slices
     tr_vect = np.array(range(npulse))*TR
@@ -48,22 +31,60 @@ def run_tof_model(scan_param, Xfunc):
     pulse_slice_tuple_unpacked = list(zip(*pulse_slice_tuple))
     timings = np.array(pulse_slice_tuple_unpacked[0])
     pulse_slice = np.array(pulse_slice_tuple_unpacked[1])
-    
+    return timings, pulse_slice
+
+def match_pulse_to_tr(npulse, nslice):
     # Define array of TR cycles that each pulse belongs to
     pulse_tr_actual = []
     for ipulse in range(npulse):
         tr_block = ipulse*np.ones(nslice)
         pulse_tr_actual = np.append(pulse_tr_actual, tr_block)    
     pulse_tr_actual = pulse_tr_actual.astype(int)
+    return pulse_tr_actual
+
+def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
+    # Initialize protons for simulation
+    dummyt = np.arange(0, TR*npulse, TR/20)
+    x0 = 0
+    X = Xfunc(dummyt, x0)
+    X0array = np.arange(-max(X), nslice*w, dx)
+    return X0array
+    
+
+def run_tof_model(scan_param, Xfunc):
+    
+    # Scan parameters
+    w = scan_param['slice_width']
+    TR = scan_param['repetition_time']
+    fa = scan_param['flip_angle']*math.pi/180
+    T1 = scan_param['t1_time']
+    nslice = scan_param['num_slice']
+    npulse = scan_param['num_pulse']
+    MBF = scan_param['MBF']
+    alpha = np.array(scan_param['alpha_list'], ndmin=2).T
+    
+    assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
+    
+    dx = 0.01
+    X0array = set_init_positions(Xfunc, TR, w, npulse, nslice, dx)
+    nproton = np.size(X0array)
+    nproton_per_slice = int(w / dx)
+    
+    # find the time and target slice of each RF pulse
+    timings, pulse_slice = get_pulse_targets(scan_param)
+    
+    # associate each pulse to its RF cycle
+    pulse_tr_actual = match_pulse_to_tr(npulse, nslice)
     
     t = time.time()
-    
+
     signal = np.zeros([npulse, nslice])
     s_counter = np.zeros([npulse, nslice])
     for iproton in range(nproton):
         
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
+    
         proton_position_no_repeats = Xfunc(np.unique(timings), init_pos)
         proton_position = np.repeat(proton_position_no_repeats, MBF)
         
