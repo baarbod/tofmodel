@@ -99,12 +99,21 @@ def compute_position_fourier_spatial(t_eval, x0, An, Bn, w0):
     sol = solve_ivp(F, trange, [x0], args=p, t_eval=t_eval, method='Radau')
     return  sol.y[0]
 
-def compute_position_resp(t_eval, x0, An, Bn, w0):
+def compute_position_triangle(t_eval, x0, A, V0, T):
     
-    N = np.size(w0)
-    x=An[0]/2.+sum([An[k+1]*np.cos(w0[k]*t_eval)+Bn[k]*np.sin(w0[k]*t_eval) 
-                   for k in range(0,N)])
-    return x
+    time_mod =  t_eval % T
+    N = np.floor(t_eval/T)
+    x = np.zeros(np.shape(time_mod))
+
+    for idx, t in enumerate(time_mod):
+        offset = N[idx]*(T*A + (V0-A)*T)
+        if t < T/2:
+            x[idx] = 2*A/T*t**2 + t*(V0-A) + offset
+            
+        elif t >= T/2:
+            x[idx] = T/2*(V0-A) + A*T/2 + (V0-A)*(t-T/2) + 2*A*(t-T/2) - 2*A*(t-T/2)**2/T + offset
+        
+    return x + x0
 
 
 
