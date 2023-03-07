@@ -8,8 +8,8 @@ Created on Fri Jan 13 10:41:44 2023
 import math
 import time
 import numpy as np
-#from fre_signal import fre_signal
-from fre_signal import fre_signal_array as fre_signal
+#from tof.fresignal import fre_signal
+from tof.fresignal import fre_signal_array as fre_signal
 
 def get_pulse_targets(scan_param):
     TR = scan_param['repetition_time']

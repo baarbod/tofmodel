@@ -9,10 +9,9 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as lines
 import numpy as np
 from functools import partial 
-import posfunclib as pfl
-from tofmodel import get_pulse_targets
-from tofmodel import set_init_positions
-from fre_signal import fre_signal_array as fre_signal
+from tof import posfunclib as pfl
+from tof import tofmodel as tm
+from tof.fresignal import fre_signal_array as fre_signal
 
 plt.close('all')
 
@@ -60,7 +59,7 @@ def main():
         'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
     
     # find the time and target slice of each RF pulse
-    timings, pulse_slice = get_pulse_targets(scan_param)
+    timings, pulse_slice = tm.get_pulse_targets(scan_param)
     
     #trvect = scan_param['repetition_time'] * np.arange(scan_param['num_pulse'])
     #trvect = np.arange(scan_param['num_pulse'])
@@ -129,7 +128,7 @@ def run_protons_subroutine(scan_param, Xfunc, X0array):
     nproton = np.size(X0array)
     
     # find the time and target slice of each RF pulse
-    timings, pulse_slice = get_pulse_targets(scan_param)
+    timings, pulse_slice = tm.get_pulse_targets(scan_param)
     
     s_proton = []
     
