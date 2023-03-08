@@ -15,39 +15,9 @@ from tof.fresignal import fre_signal_array as fre_signal
 
 plt.close('all')
 
-def draw_fading_curve(ax, x, y, val_tuple):
-
-    # x = np.linspace(0, 10, 100)
-    # y = np.sin(x)
-
-    # val_tuple = [(2, 0.8), (3, 0.35), (7, 0.3), (7.5, 0)]
-
-    xp = np.zeros(len(val_tuple))
-    yp = np.zeros(len(val_tuple))
-
-    for count, pair in enumerate(val_tuple):
-        idx = pair[0]
-        val = pair[1]
-        xp[count] = idx
-        yp[count] = val
-    
-    alpha_fade = np.interp(x, xp, yp)
-        
-    for i in range(len(x)):
-        alpha = alpha_fade[i]/np.max(alpha_fade)
-        if alpha < 0:
-            alpha = np.float(0)
-        ax.plot(x[i:i+2], y[i:i+2], color='black', alpha=alpha)
-        
-    # ax.set_xlabel('X-axis')
-    # ax.set_ylabel('Y-axis')
-    # ax.set_title('Fading Line')
-        
-    plt.show()
-
-
 def main():
-    # Dictionary containing model parameters
+    
+    # dictionary containing model parameters
     scan_param =	{
         'slice_width' : 0.25,
         'repetition_time' : 0.387,
@@ -61,31 +31,60 @@ def main():
     # find the time and target slice of each RF pulse
     timings, pulse_slice = tm.get_pulse_targets(scan_param)
     
-    #trvect = scan_param['repetition_time'] * np.arange(scan_param['num_pulse'])
-    #trvect = np.arange(scan_param['num_pulse'])
-    trvect = timings
+    # setup the plot
     fig, ax = make_base_plot()
-    draw_pulse_lines(ax, trvect)
     
+    # draw vertical lines for each RF pulse timing (assuming all slices same)
+    trvect = timings
+    draw_pulse_lines(ax, timings, pulse_slice, scan_param['slice_width'])
+    
+    # shade slices with a color
     w = 0.25
     xr = trvect[-1]
     add_slice_shade(ax, w, 1, xr, 'C0')
     add_slice_shade(ax, w, 2, xr, 'C1')
     add_slice_shade(ax, w, 3, xr, 'C3')
+    add_slice_shade(ax, w, 4, xr, 'C4')
+    add_slice_shade(ax, w, 5, xr, 'C5')
     
+    # define position function
+    Xfunc = partial(pfl.compute_position_sine, v1=-0.6, v2=0.6, w0=2*np.pi/3)
     
-    Xfunc = partial(pfl.compute_position_sine, v1=-0.5, v2=0.5, w0=2*np.pi/5)
-    #X0array = np.array([0, 0.25, 0.5])
-    X0array = np.linspace(0, 2)
+    # compute signal for each recieved RF pulse for each proton
+    X0array = np.linspace(-0.2, 2)
     s_proton = run_protons_subroutine(scan_param, Xfunc, X0array)
-    #draw_proton_trajectories(ax, trvect, Xfunc, X0array)
-    
+        
+    # draw position-time curves that fade based on signal evolution
     for x0, val_tuple in zip(X0array, s_proton):
         P = Xfunc(trvect, x0)
         draw_fading_curve(ax, trvect, P, val_tuple)
     
     
+def draw_fading_curve(ax, x, y, val_tuple):
 
+    xp = np.zeros(len(val_tuple))
+    yp = np.zeros(len(val_tuple))
+
+    for count, pair in enumerate(val_tuple):
+        idx = pair[0]
+        val = pair[1]
+        xp[count] = idx
+        yp[count] = val
+    
+    if np.size(xp) != 0:
+        alpha_fade = np.interp(x, xp, yp)
+    else:
+        alpha_fade = np.ones(np.size(x))
+        
+    for i in range(len(x)):
+        alpha = alpha_fade[i]/np.max(alpha_fade)
+        if alpha < 0:
+            alpha = float(0)
+        ax.plot(x[i:i+2], y[i:i+2], 
+                color='black', 
+                alpha=alpha)   
+        
+    plt.show()
     
 def make_base_plot():
     fig, ax = plt.subplots()
@@ -98,17 +97,14 @@ def add_slice_shade(ax, w, islice, xr, c):
     x2 = xr
     ax.fill_betweenx(y, x1, x2, step='post', color=c, alpha=0.3)
     
-def draw_pulse_lines(ax, trlist):
-    for tr in trlist:
-        line = lines.Line2D([tr, tr], [0, 0.75],
+def draw_pulse_lines(ax, timings, pulse_slice, w):
+
+    for timing, slc in zip(timings, pulse_slice):
+        x1 = slc*w
+        x2 = (slc+1)*w
+        line = lines.Line2D([timing, timing], [x1, x2],
                             lw=1, alpha=0.5, color='black', axes=ax)
         ax.add_line(line)
-
-def draw_proton_trajectories(ax, t, Xfunc, init_positions):
-    for x0 in init_positions:
-        x = Xfunc(t, x0)
-        ax.plot(t, x)
-    return x
     
 def run_protons_subroutine(scan_param, Xfunc, X0array):
     # Scan parameters
@@ -123,8 +119,6 @@ def run_protons_subroutine(scan_param, Xfunc, X0array):
     
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
     
-    # dx = 0.01
-    # X0array = set_init_positions(Xfunc, TR, w, npulse, nslice, dx)
     nproton = np.size(X0array)
     
     # find the time and target slice of each RF pulse
