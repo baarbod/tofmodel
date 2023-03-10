@@ -47,7 +47,7 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
     dummyt = np.arange(0, TR*npulse, TR/20)
     x0 = 0
     X = Xfunc(dummyt, x0)
-    X0array = np.arange(-max(X), max(X), dx)
+    X0array = np.arange(-max(X), 2*nslice*w, dx)
     return X0array
     
 
