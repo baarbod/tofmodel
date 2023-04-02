@@ -7,7 +7,7 @@ Created on Wed Jan 18 16:24:53 2023
 
 import numpy as np
 from scipy.integrate import solve_ivp
-
+from scipy.integrate import cumtrapz
 
 def model(Xfunc, t):
     x = Xfunc(t, 0)
@@ -115,5 +115,13 @@ def compute_position_triangle(t_eval, x0, A, V0, T):
         
     return x + x0
 
-
-
+def compute_position_numeric(t_eval, x0, trvect, xcs):
+    x = np.zeros(np.size(t_eval))
+    # xcs = cumtrapz(np.squeeze(v), trvect, initial=0)
+    xcs = np.array(xcs)
+    xcs += x0
+    for idx, timing in enumerate(t_eval):
+        diffarray = np.absolute(trvect-timing)
+        ind = diffarray.argmin()
+        x[idx] = xcs[ind]
+    return x
