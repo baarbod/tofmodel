@@ -34,7 +34,10 @@ trvect = tr * np.arange(np.size(vin))
 A = np.loadtxt('area.txt')
 fig, ax1 = plt.subplots(nrows=1, ncols=1)
 slc1 = 30
-xarea = 1 * np.arange(np.size(A)) - slc1
+xarea = 1 * np.arange(np.size(A))
+xarea_new = 0.1 * np.arange(10*np.size(A))
+A = np.interp(xarea_new , xarea, A)
+xarea = xarea_new - slc1
 ax1.plot(xarea, A)
 
 xcs = cumtrapz(np.squeeze(vin), trvect, initial=0)
