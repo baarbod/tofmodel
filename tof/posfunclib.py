@@ -43,22 +43,23 @@ def compute_position_fourier(t, x0, An, Bn, w0):
     term = term.squeeze()
     return A0*t/2 + term + k
 
-def compute_position_sine_spatial(t_eval, x0, v1, v2, w0):
+def compute_position_sine_spatial(t_eval, x0, v1, v2, w0, xarea, A):
 
-    def F(t, x, k, m, r1, v1, v2, w0):
+    def F(t, x, v1, v2, w0, xarea, A):
+        ind0 = xarea == 0
+        area0 = A[ind0]
+        diffarray = np.absolute(xarea-x)
+        ind = diffarray.argmin()
+        pos_term = area0/A[ind]
+        
         Amp = (v2-v1)/2
         A0 = (v1 + Amp)*2
         An = Amp
-        pos_term = k*(r1/(m*x + r1))**2
-        pos_term = np.heaviside(x, 0)*pos_term + np.heaviside(-x, 1) 
         time_term = A0/2 + An*np.cos(w0*t) 
         state = pos_term * time_term 
         return state
     
-    k = 1
-    m = 0.2
-    r1 = 1
-    p = (k, m, r1, v1, v2, w0)
+    p = (v1, v2, w0, xarea, A)
     
     trange = [np.min(t_eval), np.max(t_eval)]
     sol = solve_ivp(F, trange, [x0], args=p, t_eval=t_eval)
@@ -125,3 +126,27 @@ def compute_position_numeric(t_eval, x0, trvect, xcs):
         ind = diffarray.argmin()
         x[idx] = xcs[ind]
     return x
+
+def compute_position_numeric_spatial(t_eval, x0, trvect, vts, xarea, A):
+    
+    def F(t, x, vts, xarea, A):
+        
+        ind0 = xarea == 0
+        area0 = A[ind0]
+        diffarray = np.absolute(xarea-x)
+        ind = diffarray.argmin()
+        pos_term = area0/A[ind]
+        
+        # time_term = vts
+        diffarray = np.absolute(trvect-t)
+        ind = diffarray.argmin()
+        time_term = vts[ind]
+        
+        state = pos_term * time_term 
+        return state
+    
+    p = (vts, xarea, A)
+    
+    trange = [np.min(t_eval), np.max(t_eval)]
+    sol = solve_ivp(F, trange, [x0], args=p, t_eval=t_eval)
+    return  sol.y[0]
