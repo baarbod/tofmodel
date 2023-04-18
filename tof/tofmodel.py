@@ -71,8 +71,8 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
                 xupper = x0
                 break
 
-    print('setting lower bound to ' + str(xlower))
-    print('setting upper bound to ' + str(xupper))
+    print('setting lower bound to ' + str(xlower) + ' cm')
+    print('setting upper bound to ' + str(xupper) + ' cm')
     X0array = np.arange(xlower, xupper, dx)
     return X0array
     
@@ -114,7 +114,7 @@ def run_tof_model(scan_param, Xfunc):
         
         if iproton/nproton > 0.5 and not halfway_flag:
             halfway_flag = 1
-            print('half way done at ' + str(time.time()-t) + 'seconds')
+            print('half way done at ' + str(time.time()-t) + ' seconds')
         
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
@@ -146,7 +146,7 @@ def run_tof_model(scan_param, Xfunc):
              s_counter[current_tr, current_slice] += 1
     
     elapsed = time.time() - t
-    print('total simulation timeL: ' + elapsed)
+    print('total simulation time: ' + str(elapsed))
     print(' ')
     
     # # Check conservation of protons
