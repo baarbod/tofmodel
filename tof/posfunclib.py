@@ -135,13 +135,19 @@ def compute_position_numeric_spatial(t_eval, x0, trvect, vts, xarea, A):
         area0 = A[ind0]
         diffarray = np.absolute(xarea-x)
         ind = diffarray.argmin()
-        pos_term = area0/A[ind]
+        a = A[ind]
+        if a == 0:
+            a = 0.2
+            
+        pos_term = area0/a
         
         # time_term = vts
         diffarray = np.absolute(trvect-t)
         ind = diffarray.argmin()
         time_term = vts[ind]
         
+
+            
         state = pos_term * time_term 
         return state
     
