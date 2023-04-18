@@ -45,13 +45,35 @@ def match_pulse_to_tr(npulse, nslice):
 def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
     # Initialize protons for simulation
     dummyt = np.arange(0, TR*npulse, TR/20)
-    x0 = 0
-    X = Xfunc(dummyt, x0)
-    
-    xlower = abs(max(X))
-    xupper = abs(min(X))
-    
-    X0array = np.arange(-xlower, xupper + w*nslice, dx)
+    print('Finding initial proton positions...')
+    x0test_range = np.arange(-25, 0, 0.5)
+    forward_flag = 1
+    while forward_flag:
+        for x0 in x0test_range:
+            X = Xfunc(dummyt, x0)
+            xmin = np.min(X)
+            xmax = np.max(X)
+            if xmin < xmax:
+                forward_flag = 0
+            if xmax > 0:
+                xlower = x0
+                xupper = 2*w*nslice
+                break
+            
+    if not forward_flag:
+        x0test_range = np.arange(25, 0, -0.5)
+        for x0 in x0test_range:
+            X = Xfunc(dummyt, x0)
+            xmin = np.min(X)
+            xmax = np.max(X)
+            if xmin < 0:
+                xlower = -2*w*nslice
+                xupper = x0
+                break
+
+    print('setting lower bound to ' + str(xlower))
+    print('setting upper bound to ' + str(xupper))
+    X0array = np.arange(xlower, xupper, dx)
     return X0array
     
 
@@ -74,6 +96,8 @@ def run_tof_model(scan_param, Xfunc):
     nproton = np.size(X0array)
     nproton_per_slice = int(w / dx)
     
+    print('running simulation with ' + str(nproton) + ' protons...')
+    
     # find the time and target slice of each RF pulse
     timings, pulse_slice = get_pulse_targets(scan_param)
     
@@ -84,7 +108,13 @@ def run_tof_model(scan_param, Xfunc):
 
     signal = np.zeros([npulse, nslice])
     s_counter = np.zeros([npulse, nslice])
+    halfway_flag = 0
+    
     for iproton in range(nproton):
+        
+        if iproton/nproton > 0.5 and not halfway_flag:
+            halfway_flag = 1
+            print('half way done at ' + str(time.time()-t) + 'seconds')
         
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
@@ -116,7 +146,8 @@ def run_tof_model(scan_param, Xfunc):
              s_counter[current_tr, current_slice] += 1
     
     elapsed = time.time() - t
-    print(elapsed)
+    print('total simulation timeL: ' + elapsed)
+    print(' ')
     
     # # Check conservation of protons
     # err_statement = 'Warning: proton conservation failed - check s_counter.'
