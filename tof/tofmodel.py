@@ -46,22 +46,28 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
     # Initialize protons for simulation
     dummyt = np.arange(0, TR*npulse, TR/20)
     print('Finding initial proton positions...')
-    x0test_range = np.arange(-25, 0, 0.5)
+    x0 = -100
     forward_flag = 1
-    while forward_flag:
-        for x0 in x0test_range:
-            X = Xfunc(dummyt, x0)
-            xmin = np.min(X)
-            xmax = np.max(X)
-            if xmin < xmax:
-                forward_flag = 0
-            if xmax > 0:
-                xlower = x0
-                xupper = 2*w*nslice
-                break
+    doloop = 1
+    while forward_flag and doloop:
+        X = Xfunc(dummyt, x0)
+        xmin = np.min(X)
+        xmax = np.max(X)
+        # if xmin > xmax:
+        #     forward_flag = 0
+        # if xmax < x0:
+        #     forward_flag = 0
+        if abs(x0 - xmin) > abs(x0 - xmax):
+            forward_flag = 0
+        if xmax > 0 and xmax < w*nslice:
+            xlower = x0
+            xupper = 2*w*nslice
+            doloop = 0
+            break
+        x0 += w
             
     if not forward_flag:
-        x0test_range = np.arange(25, 0, -0.5)
+        x0test_range = np.arange(100, 0, -w)
         for x0 in x0test_range:
             X = Xfunc(dummyt, x0)
             xmin = np.min(X)
