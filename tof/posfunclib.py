@@ -136,7 +136,7 @@ def compute_position_numeric_spatial(t_eval, x0, trvect, vts, xarea, A):
         diffarray = np.absolute(xarea-x)
         ind = diffarray.argmin()
         a = A[ind]
-        if a == 0:
+        if a < 0.2:
             a = 0.2
             
         pos_term = area0/a
