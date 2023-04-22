@@ -48,11 +48,12 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
     print('Finding initial proton positions...')
     forward_flag = 1
     
-    # import matplotlib.pyplot as plt
-    # fig, [ax1, ax2] = plt.subplots(nrows=1, ncols=2)
-    x0test_range = np.arange(-100, 100)
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(nrows=1, ncols=1)
+    x0test_range = np.arange(-800, 800, 1)
     arrmin = np.zeros(np.size(x0test_range))
     arrmax = np.zeros(np.size(x0test_range))
+    protons_to_include = []
     for idx, x0 in enumerate(x0test_range):
         # print(x0)
         X = Xfunc(dummyt, x0)
@@ -60,35 +61,29 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
         xmax = np.max(X)
         arrmin[idx] = xmin
         arrmax[idx] = xmax
-    # ax1.plot(x0test_range, x0test_range, label='x0')
-    # ax1.plot(x0test_range, arrmin - x0test_range, label='xmin - x0')
-    # ax1.plot(x0test_range, arrmax - x0test_range, label='xmax - x0')
-    # ax2.plot(x0test_range, x0test_range, label='x0')
-    # ax2.plot(x0test_range, arrmin, label='xmin')
-    # ax2.plot(x0test_range, arrmax, label='xmax')
-    # ax1.legend(); ax2.legend(); 
-    # plt.show()
-    
-    offset_max = np.abs(np.mean(arrmax - x0test_range))
-    if np.mean(offset_max) < 0.5:
-        forward_flag = 0
-    else:
-        forward_flag = 1
-    
-    if forward_flag:
-        a = np.sign(arrmax)
-        b = a == 1
-        res = next((i for i, j in enumerate(b) if j), None)
-        print("The values till first True value : " + str(res))
-        xlower = x0test_range[res] - 5
-        xupper = 2*w*nslice
-    else:
-        min_above = arrmin > w*nslice
-        max_within = arrmax > 0
-        result = set(i for i, x in enumerate(max_within) if x and not min_above[i])
-        xupper = x0test_range[max(result)]
-        xlower = -2*w*nslice
+        lower_within_bool = xmin > 0 and xmin < w*nslice
+        upper_within_bool = xmax > 0 and xmax < w*nslice
+        if lower_within_bool or upper_within_bool:
+            protons_to_include.append(idx)
 
+    ax.plot(x0test_range, x0test_range, label='x0')
+    ax.plot(x0test_range, arrmin, label='xmin')
+    ax.plot(x0test_range, arrmax, label='xmax')
+    for i in protons_to_include:
+        ax.axvline(x0test_range[i], linestyle=':', color='black')
+    ax.axhline(0, linestyle='--', color='gray')   
+    ax.axhline(w*nslice, linestyle='--', color='gray')
+    ax.legend()
+    plt.show()
+    
+    xlower = x0test_range[min(protons_to_include) - 5]
+    xupper = x0test_range[max(protons_to_include) + 5]
+
+    ax.set_xlim(xlower, xupper)
+    ax.set_ylim(xlower, xupper)
+
+    if xupper < xlower:
+        print('WARNING: xupper is less than xlower. Check proton initialization')
     print('setting lower bound to ' + str(xlower) + ' cm')
     print('setting upper bound to ' + str(xupper) + ' cm')
     X0array = np.arange(xlower, xupper, dx)
@@ -126,13 +121,15 @@ def run_tof_model(scan_param, Xfunc):
 
     signal = np.zeros([npulse, nslice])
     s_counter = np.zeros([npulse, nslice])
-    halfway_flag = 0
     
+    fraction = nproton/10
     for iproton in range(nproton):
         
-        if iproton/nproton > 0.5 and not halfway_flag:
-            halfway_flag = 1
-            print('half way done at ' + str(time.time()-t) + ' seconds')
+        if (iproton % fraction) == 0:
+            tnow = time.time()-t
+            tstr = '{:3.2f}'.format(tnow)
+            string = str(iproton) + ' protons at ' + tstr + ' seconds'
+            print(string)
         
         # Solve position at each pulse for this proton
         init_pos = X0array[iproton]
