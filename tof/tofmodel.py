@@ -46,11 +46,13 @@ def match_pulse_to_tr(npulse, nslice):
     pulse_tr_actual = pulse_tr_actual.astype(int)
     return pulse_tr_actual
 
-def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
+def set_init_positions(Xfunc, TR, w, npulse, nslice, dx, showplot=True):
     # Initialize protons for simulation
     dummyt = np.arange(0, TR*npulse, TR/10)
     print('Finding initial proton positions...')
-    fig, ax = plt.subplots(nrows=1, ncols=1)
+    
+    if showplot:
+        fig, ax = plt.subplots(nrows=1, ncols=1)
     
     # define range of potential positions
     x0test_range = np.arange(-800, 800, 1)
@@ -81,21 +83,23 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
             # record this proton as a candidate
             protons_to_include.append(idx)
 
-    ax.plot(x0test_range, x0test_range, label='x0')
-    ax.plot(x0test_range, arrmin, label='xmin')
-    ax.plot(x0test_range, arrmax, label='xmax')
-    for i in protons_to_include:
-        ax.axvline(x0test_range[i], linestyle=':', color='black')
-    ax.axhline(0, linestyle='--', color='gray')   
-    ax.axhline(w*nslice, linestyle='--', color='gray')
-    ax.legend()
-    
     # define bounds with some padding
     xlower = x0test_range[min(protons_to_include) - 5]
     xupper = x0test_range[max(protons_to_include) + 5]
-    ax.set_xlim(xlower, xupper)
-    ax.set_ylim(xlower, xupper)
-    plt.show() 
+    
+    if showplot:
+        ax.plot(x0test_range, x0test_range, label='x0')
+        ax.plot(x0test_range, arrmin, label='xmin')
+        ax.plot(x0test_range, arrmax, label='xmax')
+        for i in protons_to_include:
+            ax.axvline(x0test_range[i], linestyle=':', color='black')
+        ax.axhline(0, linestyle='--', color='gray')   
+        ax.axhline(w*nslice, linestyle='--', color='gray')
+        ax.legend()
+        
+        ax.set_xlim(xlower, xupper)
+        ax.set_ylim(xlower, xupper)
+        plt.show() 
 
     if xupper < xlower:
         print('WARNING: xupper is less than xlower. Check proton initialization')
@@ -105,7 +109,7 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx):
     return X0array
     
 
-def run_tof_model(scan_param, Xfunc, uselookup=True, updatelookup=False):
+def run_tof_model(scan_param, Xfunc, uselookup=True, updatelookup=False, showplot=True):
     
     # updatelookup only makes sense if using lookup table
     if not uselookup:
@@ -125,7 +129,7 @@ def run_tof_model(scan_param, Xfunc, uselookup=True, updatelookup=False):
     
     # set the proton initial positions
     dx = 0.01
-    X0array = set_init_positions(Xfunc, TR, w, npulse, nslice, dx)
+    X0array = set_init_positions(Xfunc, TR, w, npulse, nslice, dx, showplot=showplot)
     nproton = np.size(X0array)
     nproton_per_slice = int(w / dx)
     
