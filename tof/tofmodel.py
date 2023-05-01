@@ -79,7 +79,8 @@ def set_init_positions(Xfunc, TR, w, npulse, nslice, dx, showplot=True):
         # check if proton would flow within slices
         lower_within_bool = xmin > 0 and xmin < w*nslice
         upper_within_bool = xmax > 0 and xmax < w*nslice
-        if lower_within_bool or upper_within_bool:
+        slice_within_bool = xmin < 0 and xmax > w*nslice
+        if lower_within_bool or upper_within_bool or slice_within_bool:
             # record this proton as a candidate
             protons_to_include.append(idx)
 
