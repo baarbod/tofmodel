@@ -29,7 +29,9 @@ def main():
     timings, pulse_slice = tm.get_pulse_targets(scan_param)
     
     # setup the plot
-    fig, ax = make_base_plot()
+    fig, axes = make_base_plot()
+    ax = axes[1]
+    plt.subplots_adjust(hspace=0)
     
     # draw vertical lines for each RF pulse timing (assuming all slices same)
     trvect = timings
@@ -44,14 +46,15 @@ def main():
     add_slice_shade(ax, w, 4, xr, "dimgrey")
     add_slice_shade(ax, w, 5, xr, "dimgrey")
     add_slice_shade(ax, w, 6, xr, "dimgrey")
+    add_slice_shade(ax, w, 7, xr, "dimgrey")
+    add_slice_shade(ax, w, 8, xr, "dimgrey")
     
     # define position function
-    v1, v2, w0 = -0.3, 0.32, 2*np.pi/6
+    v1, v2, w0 = -0.5, 0.52, 2*np.pi/6
     Xfunc = partial(pfl.compute_position_sine, v1=v1, v2=v2, w0=w0)
     
     # compute signal for each recieved RF pulse for each proton
     X0array = np.arange(-20, 1.2, 0.1)
-    # X0array = np.array([-0.3])
     s_proton = run_protons_subroutine(scan_param, Xfunc, X0array)
         
     # draw position-time curves that fade based on signal evolution
@@ -64,22 +67,72 @@ def main():
         item.set_fontsize(22) 
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.set_xlabel('Time (s)') 
+    # ax.set_xlabel('Time (s)') 
     ax.set_ylabel('Position (cm)') 
-    # ax.set_xlim(10, 20)
-    ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
+    ax.set_xlim(4, 16)
+    ax.set_ylim(-0.15, 3*w + 0.05)
     plt.tight_layout(pad=3)
     plt.show()
     
-    if np.size(X0array) == 1:
-        tup = s_proton[0]
-        pulse_recieve_times = [pair[0] for pair in tup]
-        dts = list(np.diff(pulse_recieve_times))
-        dt_list = list([np.float('nan')])
-        dt_list = np.array(dt_list + dts)
-        fig, ax = plot_Mt_curve(scan_param, dt_list)
+    axes = plot_velocity_and_signal(scan_param, Xfunc, 
+                                         v1=v1, v2=v2, w0=w0, 
+                                         axes=[axes[2],axes[0]])
+    # axes[0].set_ylim(-0.01, 0.6)
+    axes[0].set_xlim(4, 16)
+    # axes[1].set_ylim(-0.01, 0.6)
+    axes[1].set_xlim(4, 16)
+    figname = 'results/' + 'detailed_schematic'
+    fig.savefig(figname, bbox_inches="tight")
     
-    fig, ax = plot_velocity_and_signal(scan_param, Xfunc, v1=v1, v2=v2, w0=w0)
+    X0array = np.array([-0.2])
+    s_proton = run_protons_subroutine(scan_param, Xfunc, X0array)
+    tup = s_proton[0]
+    pulse_recieve_times = [pair[0] for pair in tup]
+    dts = list(np.diff(pulse_recieve_times))
+    dt_list = list([np.float('nan')])
+    dt_list = np.array(dt_list + dts)
+    fig, ax = plot_Mt_curve(scan_param, dt_list)
+    ax.set_xlim(0, 12)
+    ax.set_box_aspect(1)
+    figname = 'results/' + 'single_proton_Mt_curve'
+    fig.savefig(figname, bbox_inches="tight")
+    
+    fig, ax = plt.subplots(figsize=(8, 8))
+    ax.set_ylim(-0.1, 3*w + 0.05)
+    ax.set_xlim(0, 10)
+    ax.set_box_aspect(1)
+    # draw vertical lines for each RF pulse timing (assuming all slices same)
+    trvect = timings
+    draw_pulse_lines(ax, timings, pulse_slice, scan_param['slice_width'])
+    
+    # shade slices with a color
+    w = 0.25
+    xr = trvect[-1]
+    add_slice_shade(ax, w, 1, xr, "slateblue")
+    add_slice_shade(ax, w, 2, xr, "teal")
+    add_slice_shade(ax, w, 3, xr, "orange")
+    add_slice_shade(ax, w, 4, xr, "dimgrey")
+    add_slice_shade(ax, w, 5, xr, "dimgrey")
+    add_slice_shade(ax, w, 6, xr, "dimgrey")
+    add_slice_shade(ax, w, 7, xr, "dimgrey")
+    add_slice_shade(ax, w, 8, xr, "dimgrey")
+    
+    # draw position-time curves that fade based on signal evolution
+    for x0, val_tuple in zip(X0array, s_proton):
+        P = Xfunc(trvect, x0)
+        draw_fading_curve(ax, trvect, P, val_tuple)
+
+    for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                 ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontsize(22) 
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    # ax.set_xlabel('Time (s)') 
+    ax.set_ylabel('Position (cm)') 
+    plt.tight_layout(pad=3)
+    plt.show()
+    figname = 'results/' + 'single_proton_trajectory'
+    fig.savefig(figname, bbox_inches="tight")
     
 def draw_fading_curve(ax, x, y, val_tuple):
 
@@ -121,8 +174,9 @@ def draw_fading_curve(ax, x, y, val_tuple):
     plt.show()
     
 def make_base_plot():
-    fig, ax = plt.subplots(figsize=(12, 8))
-    return fig, ax
+    # fig, ax = plt.subplots(figsize=(10, 5))
+    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(7, 10))
+    return fig, axes
 
 def add_slice_shade(ax, w, islice, xr, c):    
     
@@ -205,7 +259,7 @@ def plot_Mt_curve(scan_param, dt_list):
         S[ipulse] = fre_signal(ipulse+1, fa, TR, T1, dt_list)
           
 
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(8, 8))
         
     # Plot slice signals
     pulsehistory = np.arange(1, np.size(S)+1)
@@ -224,15 +278,20 @@ def plot_Mt_curve(scan_param, dt_list):
     plt.show()
     return fig, ax
 
-def plot_velocity_and_signal(scan_param, Xfunc, v1=None, v2=None, w0=None):
+def plot_velocity_and_signal(scan_param, Xfunc, v1=None, v2=None, w0=None, 
+                             axes=None):
     
-    signal = tm.run_tof_model(scan_param, Xfunc)
+    if not axes:
+        fig, [axleft, axright] = plt.subplots(nrows=1, ncols=1)
+    else:
+        fig = None
+        axleft, axright = axes[0], axes[1]
+    
+    signal = tm.run_tof_model(scan_param, Xfunc, showplot=False)
     trvect_sim = scan_param['repetition_time'] * np.arange(scan_param['num_pulse'])
     
     c1, c2, c3 = ["slateblue", "teal", "orange"]
 
-    fig, axleft = plt.subplots(figsize=(12, 8))
-    fig, axright = plt.subplots(figsize=(12, 8))
     axleft.plot(trvect_sim, signal[:, 0:3], linewidth=3)
     line_handles = axleft.get_lines()
     line_handles[0].set_color(c1)
@@ -255,13 +314,13 @@ def plot_velocity_and_signal(scan_param, Xfunc, v1=None, v2=None, w0=None):
                      ax.get_xticklabels() + ax.get_yticklabels()):
             item.set_fontsize(22) 
         ax.spines['top'].set_visible(False)
-        ax.set_xlabel('Time (s)') 
+        ax.spines['right'].set_visible(False)
+        # ax.set_xlabel('Time (s)') 
         ax.set_ylabel(ylabel) 
-    # ax.set_xlim(10, 20)
-    # ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
-    plt.tight_layout(pad=3)
+    plt.tight_layout(pad=4)
     plt.show()
-    return fig, ax
+    axes[0].set_xlabel('Time (s)') 
+    return axes
 
 if __name__ == "__main__":
    main()
