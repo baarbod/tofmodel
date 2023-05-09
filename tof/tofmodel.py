@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Fri Jan 13 10:41:44 2023
-
-@author: Baarbod
-"""
 
 import math
 import time
