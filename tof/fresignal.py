@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Wed Jan 25 15:48:37 2023
-
-@author: Baarbod
-"""
 
 import numpy as np
 import operator
