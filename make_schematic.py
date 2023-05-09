@@ -7,6 +7,8 @@ Created on Thu Feb 23 16:46:40 2023
 
 import matplotlib.pyplot as plt
 import matplotlib.lines as lines
+from matplotlib.collections import LineCollection
+
 import numpy as np
 from functools import partial 
 from tof import posfunclib as pfl
@@ -20,14 +22,15 @@ def main():
     # dictionary containing model parameters
     scan_param =	{
         'slice_width' : 0.25,
-        'repetition_time' : 0.387,
+        'repetition_time' : 0.5,
         'flip_angle' : 47,
         't1_time' : 4,
-        'num_slice' : 5,
-        'num_pulse' : 20,
+        'num_slice' : 6,
+        'num_pulse' : 50,
         'MBF' : 1, 
-        'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
-    
+        # 'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
+        'alpha_list' : np.linspace(0, 0.5-0.05, 6)}
+        
     # find the time and target slice of each RF pulse
     timings, pulse_slice = tm.get_pulse_targets(scan_param)
     
@@ -41,24 +44,48 @@ def main():
     # shade slices with a color
     w = 0.25
     xr = trvect[-1]
-    add_slice_shade(ax, w, 1, xr, 'C0')
-    add_slice_shade(ax, w, 2, xr, 'C1')
-    add_slice_shade(ax, w, 3, xr, 'C3')
-    add_slice_shade(ax, w, 4, xr, 'C4')
-    add_slice_shade(ax, w, 5, xr, 'C5')
+    add_slice_shade(ax, w, 1, xr, "slateblue")
+    add_slice_shade(ax, w, 2, xr, "teal")
+    add_slice_shade(ax, w, 3, xr, "orange")
+    add_slice_shade(ax, w, 4, xr, "dimgrey")
+    add_slice_shade(ax, w, 5, xr, "dimgrey")
+    add_slice_shade(ax, w, 6, xr, "dimgrey")
     
     # define position function
-    Xfunc = partial(pfl.compute_position_sine, v1=-0.6, v2=0.6, w0=2*np.pi/3)
+    v1, v2, w0 = -0.3, 0.32, 2*np.pi/6
+    Xfunc = partial(pfl.compute_position_sine, v1=v1, v2=v2, w0=w0)
     
     # compute signal for each recieved RF pulse for each proton
-    X0array = np.linspace(-0.2, 2)
+    X0array = np.arange(-20, 1.2, 0.1)
+    # X0array = np.array([-0.3])
     s_proton = run_protons_subroutine(scan_param, Xfunc, X0array)
         
     # draw position-time curves that fade based on signal evolution
     for x0, val_tuple in zip(X0array, s_proton):
         P = Xfunc(trvect, x0)
         draw_fading_curve(ax, trvect, P, val_tuple)
+
+    for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                 ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontsize(22) 
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_xlabel('Time (s)') 
+    ax.set_ylabel('Position (cm)') 
+    # ax.set_xlim(10, 20)
+    ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
+    plt.tight_layout(pad=3)
+    plt.show()
     
+    if np.size(X0array) == 1:
+        tup = s_proton[0]
+        pulse_recieve_times = [pair[0] for pair in tup]
+        dts = list(np.diff(pulse_recieve_times))
+        dt_list = list([np.float('nan')])
+        dt_list = np.array(dt_list + dts)
+        fig, ax = plot_Mt_curve(scan_param, dt_list)
+    
+    fig, ax = plot_velocity_and_signal(scan_param, Xfunc, v1=v1, v2=v2, w0=w0)
     
 def draw_fading_curve(ax, x, y, val_tuple):
 
@@ -75,19 +102,32 @@ def draw_fading_curve(ax, x, y, val_tuple):
         alpha_fade = np.interp(x, xp, yp)
     else:
         alpha_fade = np.ones(np.size(x))
-        
-    for i in range(len(x)):
-        alpha = alpha_fade[i]/np.max(alpha_fade)
-        if alpha < 0:
-            alpha = float(0)
-        ax.plot(x[i:i+2], y[i:i+2], 
-                color='black', 
-                alpha=alpha)   
-        
+    alpha_fade /= np.max(alpha_fade)   
+    alpha_fade[alpha_fade < 0] = 0
+    
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    lc = LineCollection(segments, alpha=alpha_fade,
+                        color='black',
+                        linewidth=3)
+    ax.add_collection(lc)
+    
+    # add pulse recieve dots
+    indices = []
+    for i, elem1 in enumerate(xp):
+        for j, elem2 in enumerate(x):
+            if elem1 == elem2:
+                indices.append(j)
+    
+    for idx in indices:
+        ax.scatter(x[idx], y[idx], 
+                   color='black',
+                   alpha=alpha_fade[idx])
+    
     plt.show()
     
 def make_base_plot():
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(12, 8))
     return fig, ax
 
 def add_slice_shade(ax, w, islice, xr, c):    
@@ -157,6 +197,77 @@ def run_protons_subroutine(scan_param, Xfunc, X0array):
         s_proton.append(signal_at_time)
     return s_proton
 
+
+def plot_Mt_curve(scan_param, dt_list):
+    fa = scan_param['flip_angle']*np.pi/180
+    TR = scan_param['repetition_time']
+    T1 = scan_param['t1_time']
+    dt_list = np.array(dt_list)
+    n = len(dt_list)
+
+    # test against other formulation 
+    S = np.zeros(n)
+    for ipulse in range(n):
+        S[ipulse] = fre_signal(ipulse+1, fa, TR, T1, dt_list)
+          
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+        
+    # Plot slice signals
+    pulsehistory = np.arange(1, np.size(S)+1)
+    ax.plot(pulsehistory, S, linewidth=5, color='dimgrey')
+        
+    for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                     ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontsize(22) 
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_xlabel('# Pulse Recieved') 
+    ax.set_ylabel('Transverse Magnetization') 
+    # ax.set_xlim(10, 20)
+    # ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
+    plt.tight_layout(pad=3)
+    plt.show()
+    return fig, ax
+
+def plot_velocity_and_signal(scan_param, Xfunc, v1=None, v2=None, w0=None):
+    
+    signal = tm.run_tof_model(scan_param, Xfunc)
+    trvect_sim = scan_param['repetition_time'] * np.arange(scan_param['num_pulse'])
+    
+    c1, c2, c3 = ["slateblue", "teal", "orange"]
+
+    fig, axleft = plt.subplots(figsize=(12, 8))
+    fig, axright = plt.subplots(figsize=(12, 8))
+    axleft.plot(trvect_sim, signal[:, 0:3], linewidth=3)
+    line_handles = axleft.get_lines()
+    line_handles[0].set_color(c1)
+    line_handles[1].set_color(c2)
+    line_handles[2].set_color(c3)
+    # axright = axleft.twinx()
+    
+    Amp = (v2-v1)/2
+    A0 = (v1 + Amp)*2
+    An = Amp
+    v = A0/2 + An*np.cos(w0*trvect_sim) 
+    axright.plot(trvect_sim, v,
+                 linewidth=3, color='black')
+    axright.axhline(y=0, color='grey', linestyle='dashed')
+    
+    axes = [axleft, axright]
+    ylab = ['Inflow Signal', 'Velocity (cm/s)']
+    for ax, ylabel in zip(axes, ylab):
+        for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                     ax.get_xticklabels() + ax.get_yticklabels()):
+            item.set_fontsize(22) 
+        ax.spines['top'].set_visible(False)
+        ax.set_xlabel('Time (s)') 
+        ax.set_ylabel(ylabel) 
+    # ax.set_xlim(10, 20)
+    # ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
+    plt.tight_layout(pad=3)
+    plt.show()
+    return fig, ax
 
 if __name__ == "__main__":
    main()
