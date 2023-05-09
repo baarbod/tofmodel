@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Feb 23 16:46:40 2023
-
-@author: Baarbod
-"""
 
 import matplotlib.pyplot as plt
 import matplotlib.lines as lines
@@ -28,7 +23,6 @@ def main():
         'num_slice' : 6,
         'num_pulse' : 50,
         'MBF' : 1, 
-        # 'alpha_list' : [0.14, 0, 0.2075, 0.07, 0.2775]}
         'alpha_list' : np.linspace(0, 0.5-0.05, 6)}
         
     # find the time and target slice of each RF pulse
