@@ -50,7 +50,7 @@ def main():
     add_slice_shade(ax, w, 8, xr, "dimgrey")
     
     # define position function
-    v1, v2, w0 = -0.5, 0.52, 2*np.pi/6
+    v1, v2, w0 = -0.4, 0.45, 2*np.pi/8
     Xfunc = partial(pfl.compute_position_sine, v1=v1, v2=v2, w0=w0)
     
     # compute signal for each recieved RF pulse for each proton
@@ -69,20 +69,25 @@ def main():
     ax.spines['right'].set_visible(False)
     # ax.set_xlabel('Time (s)') 
     ax.set_ylabel('Position (cm)') 
-    ax.set_xlim(4, 16)
-    ax.set_ylim(-0.15, 3*w + 0.05)
+    # ax.set_xlim(4, 16)
+    # ax.set_ylim(-0.15, 3*w + 0.05)
+    ax.set_xlim(8, 20)
+    ax.set_ylim(-0.4, 3*w + 0.05)
     plt.tight_layout(pad=3)
     plt.show()
     
     axes = plot_velocity_and_signal(scan_param, Xfunc, 
-                                         v1=v1, v2=v2, w0=w0, 
-                                         axes=[axes[2],axes[0]])
+                                          v1=v1, v2=v2, w0=w0, 
+                                          axes=[axes[2],axes[0]])
+
     # axes[0].set_ylim(-0.01, 0.6)
-    axes[0].set_xlim(4, 16)
+    # axes[0].set_xlim(4, 16)
+    axes[0].set_xlim(8, 20)
     # axes[1].set_ylim(-0.01, 0.6)
-    axes[1].set_xlim(4, 16)
-    figname = 'results/' + 'detailed_schematic'
-    fig.savefig(figname, bbox_inches="tight")
+    # axes[1].set_xlim(4, 16)
+    axes[1].set_xlim(8, 20)
+    figname = 'results/' + 'detailed_schematic.svg'
+    fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
     
     X0array = np.array([-0.2])
     s_proton = run_protons_subroutine(scan_param, Xfunc, X0array)
@@ -94,8 +99,8 @@ def main():
     fig, ax = plot_Mt_curve(scan_param, dt_list)
     ax.set_xlim(0, 12)
     ax.set_box_aspect(1)
-    figname = 'results/' + 'single_proton_Mt_curve'
-    fig.savefig(figname, bbox_inches="tight")
+    figname = 'results/' + 'single_proton_Mt_curve.svg'
+    fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
     
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_ylim(-0.1, 3*w + 0.05)
@@ -131,10 +136,10 @@ def main():
     ax.set_ylabel('Position (cm)') 
     plt.tight_layout(pad=3)
     plt.show()
-    figname = 'results/' + 'single_proton_trajectory'
-    fig.savefig(figname, bbox_inches="tight")
-    
-def draw_fading_curve(ax, x, y, val_tuple):
+    figname = 'results/' + 'single_proton_trajectory.svg'
+    fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
+
+def draw_fading_curve(ax, x, y, val_tuple, lw=3, s=None):
 
     xp = np.zeros(len(val_tuple))
     yp = np.zeros(len(val_tuple))
@@ -145,6 +150,7 @@ def draw_fading_curve(ax, x, y, val_tuple):
         xp[count] = idx
         yp[count] = val
     
+    from scipy import interpolate
     if np.size(xp) != 0:
         alpha_fade = np.interp(x, xp, yp)
     else:
@@ -156,7 +162,7 @@ def draw_fading_curve(ax, x, y, val_tuple):
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
     lc = LineCollection(segments, alpha=alpha_fade,
                         color='black',
-                        linewidth=3)
+                        linewidth=lw)
     ax.add_collection(lc)
     
     # add pulse recieve dots
@@ -169,13 +175,16 @@ def draw_fading_curve(ax, x, y, val_tuple):
     for idx in indices:
         ax.scatter(x[idx], y[idx], 
                    color='black',
-                   alpha=alpha_fade[idx])
+                   alpha=alpha_fade[idx],
+                   s=s,
+                   zorder=10)
     
     plt.show()
     
 def make_base_plot():
     # fig, ax = plt.subplots(figsize=(10, 5))
     fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(7, 10))
+    plt.subplots_adjust(wspace=0.05, hspace=0)
     return fig, axes
 
 def add_slice_shade(ax, w, islice, xr, c):    
@@ -267,7 +276,7 @@ def plot_Mt_curve(scan_param, dt_list):
         
     for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
                      ax.get_xticklabels() + ax.get_yticklabels()):
-        item.set_fontsize(22) 
+        item.set_fontsize(24) 
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.set_xlabel('# Pulse Recieved') 
@@ -317,7 +326,8 @@ def plot_velocity_and_signal(scan_param, Xfunc, v1=None, v2=None, w0=None,
         ax.spines['right'].set_visible(False)
         # ax.set_xlabel('Time (s)') 
         ax.set_ylabel(ylabel) 
-    plt.tight_layout(pad=4)
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.1)
     plt.show()
     axes[0].set_xlabel('Time (s)') 
     return axes
