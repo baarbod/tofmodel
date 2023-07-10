@@ -28,10 +28,12 @@ def main():
     # find the time and target slice of each RF pulse
     timings, pulse_slice = tm.get_pulse_targets(scan_param)
     
-    # setup the plot
-    fig, axes = make_base_plot()
-    ax = axes[1]
-    plt.subplots_adjust(hspace=0)
+    # # setup the plot
+    # fig, axes = make_base_plot()
+    # ax = axes[1]
+    # plt.subplots_adjust(hspace=0)
+    
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 4))
     
     # draw vertical lines for each RF pulse timing (assuming all slices same)
     trvect = timings
@@ -48,6 +50,10 @@ def main():
     add_slice_shade(ax, w, 6, xr, "dimgrey")
     add_slice_shade(ax, w, 7, xr, "dimgrey")
     add_slice_shade(ax, w, 8, xr, "dimgrey")
+    
+    y_tick_spacing = w
+    y_tick_locator = plt.MultipleLocator(base=y_tick_spacing)
+    ax.yaxis.set_major_locator(y_tick_locator)        
     
     # define position function
     v1, v2, w0 = -0.4, 0.45, 2*np.pi/8
@@ -75,19 +81,19 @@ def main():
     ax.set_ylim(-0.4, 3*w + 0.05)
     plt.tight_layout(pad=3)
     plt.show()
-    
-    axes = plot_velocity_and_signal(scan_param, Xfunc, 
-                                          v1=v1, v2=v2, w0=w0, 
-                                          axes=[axes[2],axes[0]])
-
-    # axes[0].set_ylim(-0.01, 0.6)
-    # axes[0].set_xlim(4, 16)
-    axes[0].set_xlim(8, 20)
-    # axes[1].set_ylim(-0.01, 0.6)
-    # axes[1].set_xlim(4, 16)
-    axes[1].set_xlim(8, 20)
-    figname = 'results/' + 'detailed_schematic.svg'
+    figname = 'results/' + 'schematic_position.svg'
     fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
+    
+    fig, ax = make_velocity_plot(scan_param, v1=v1, v2=v2, w0=w0)
+    ax.set_xlim(8, 20)
+    figname = 'results/' + 'schematic_velocity.svg'
+    fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)    
+ 
+    fig, ax = make_signal_plot(scan_param, Xfunc)
+    ax.set_xlim(8, 20)
+    figname = 'results/' + 'schematic_signal.svg'
+    fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
+    
     
     X0array = np.array([-0.2])
     s_proton = run_protons_subroutine(scan_param, Xfunc, X0array)
@@ -102,8 +108,8 @@ def main():
     figname = 'results/' + 'single_proton_Mt_curve.svg'
     fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
     
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.set_ylim(-0.1, 3*w + 0.05)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.set_ylim(-0.65, 2*w + 0.05)
     ax.set_xlim(0, 10)
     ax.set_box_aspect(1)
     # draw vertical lines for each RF pulse timing (assuming all slices same)
@@ -122,24 +128,30 @@ def main():
     add_slice_shade(ax, w, 7, xr, "dimgrey")
     add_slice_shade(ax, w, 8, xr, "dimgrey")
     
+    y_tick_spacing = w
+    y_tick_locator = plt.MultipleLocator(base=y_tick_spacing)
+    ax.yaxis.set_major_locator(y_tick_locator) 
+    
     # draw position-time curves that fade based on signal evolution
     for x0, val_tuple in zip(X0array, s_proton):
         P = Xfunc(trvect, x0)
-        draw_fading_curve(ax, trvect, P, val_tuple)
-
+        # draw_fading_curve(ax, trvect, P, val_tuple, lw=6, s=1500,
+                          # marker="$+RF$")
+        draw_fading_curve(ax, trvect, P, val_tuple, lw=6, s=150)
+        
     for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
                  ax.get_xticklabels() + ax.get_yticklabels()):
-        item.set_fontsize(22) 
+        item.set_fontsize(24) 
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    # ax.set_xlabel('Time (s)') 
+    ax.set_xlabel('Time (s)') 
     ax.set_ylabel('Position (cm)') 
     plt.tight_layout(pad=3)
     plt.show()
     figname = 'results/' + 'single_proton_trajectory.svg'
     fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
 
-def draw_fading_curve(ax, x, y, val_tuple, lw=3, s=None):
+def draw_fading_curve(ax, x, y, val_tuple, lw=2, s=None, marker=None):
 
     xp = np.zeros(len(val_tuple))
     yp = np.zeros(len(val_tuple))
@@ -150,7 +162,6 @@ def draw_fading_curve(ax, x, y, val_tuple, lw=3, s=None):
         xp[count] = idx
         yp[count] = val
     
-    from scipy import interpolate
     if np.size(xp) != 0:
         alpha_fade = np.interp(x, xp, yp)
     else:
@@ -177,15 +188,10 @@ def draw_fading_curve(ax, x, y, val_tuple, lw=3, s=None):
                    color='black',
                    alpha=alpha_fade[idx],
                    s=s,
-                   zorder=10)
+                   zorder=10,
+                   marker=marker)
     
     plt.show()
-    
-def make_base_plot():
-    # fig, ax = plt.subplots(figsize=(10, 5))
-    fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(7, 10))
-    plt.subplots_adjust(wspace=0.05, hspace=0)
-    return fig, axes
 
 def add_slice_shade(ax, w, islice, xr, c):    
     
@@ -268,11 +274,11 @@ def plot_Mt_curve(scan_param, dt_list):
         S[ipulse] = fre_signal(ipulse+1, fa, TR, T1, dt_list)
           
 
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(6, 6))
         
     # Plot slice signals
     pulsehistory = np.arange(1, np.size(S)+1)
-    ax.plot(pulsehistory, S, linewidth=5, color='dimgrey')
+    ax.plot(pulsehistory, S, linewidth=6, color='dimgrey')
         
     for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
                      ax.get_xticklabels() + ax.get_yticklabels()):
@@ -280,57 +286,61 @@ def plot_Mt_curve(scan_param, dt_list):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.set_xlabel('# Pulse Recieved') 
-    ax.set_ylabel('Transverse Magnetization') 
+    ax.set_ylabel('Transverse Magnetization (a.u.)') 
     # ax.set_xlim(10, 20)
     # ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
     plt.tight_layout(pad=3)
     plt.show()
     return fig, ax
 
-def plot_velocity_and_signal(scan_param, Xfunc, v1=None, v2=None, w0=None, 
-                             axes=None):
-    
-    if not axes:
-        fig, [axleft, axright] = plt.subplots(nrows=1, ncols=1)
-    else:
-        fig = None
-        axleft, axright = axes[0], axes[1]
-    
+def make_signal_plot(scan_param, Xfunc):
     signal = tm.run_tof_model(scan_param, Xfunc, showplot=False)
     trvect_sim = scan_param['repetition_time'] * np.arange(scan_param['num_pulse'])
     
     c1, c2, c3 = ["slateblue", "teal", "orange"]
-
-    axleft.plot(trvect_sim, signal[:, 0:3], linewidth=3)
-    line_handles = axleft.get_lines()
+    
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 4))
+    
+    ax.plot(trvect_sim, signal[:, 0:3], linewidth=5)
+    line_handles = ax.get_lines()
     line_handles[0].set_color(c1)
     line_handles[1].set_color(c2)
     line_handles[2].set_color(c3)
-    # axright = axleft.twinx()
     
+    for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                 ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontsize(22) 
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.set_xlabel('Time (s)') 
+    ax.set_ylabel('Inflow Signal (a.u.)') 
+    plt.tight_layout(pad=3)
+    plt.show()
+    return fig, ax
+
+def make_velocity_plot(scan_param, v1=None, v2=None, w0=None):
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(6, 4))
+    
+    trvect_sim = scan_param['repetition_time'] * np.arange(scan_param['num_pulse'])
     Amp = (v2-v1)/2
     A0 = (v1 + Amp)*2
     An = Amp
     v = A0/2 + An*np.cos(w0*trvect_sim) 
-    axright.plot(trvect_sim, v,
-                 linewidth=3, color='black')
-    axright.axhline(y=0, color='grey', linestyle='dashed')
-    
-    axes = [axleft, axright]
-    ylab = ['Inflow Signal', 'Velocity (cm/s)']
-    for ax, ylabel in zip(axes, ylab):
-        for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
-                     ax.get_xticklabels() + ax.get_yticklabels()):
-            item.set_fontsize(22) 
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        # ax.set_xlabel('Time (s)') 
-        ax.set_ylabel(ylabel) 
-    plt.tight_layout()
-    plt.subplots_adjust(bottom=0.1)
+    ax.plot(trvect_sim, v,
+                 linewidth=5, color='black')
+    ax.axhline(y=0, color='grey', linestyle='dashed')    
+
+    for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
+                 ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontsize(22) 
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    # ax.set_xlabel('Time (s)') 
+    ax.set_ylabel('Velocity (cm/s)') 
+    plt.tight_layout(pad=3)
     plt.show()
-    axes[0].set_xlabel('Time (s)') 
-    return axes
+    return fig, ax
 
 if __name__ == "__main__":
    main()
