@@ -179,9 +179,6 @@ def run_tof_model(scan_param, Xfunc, uselookup=False, updatelookup=False,
                 tstr = '{:3.2f}'.format(tnow)
                 string = str(iproton) + ' protons at ' + tstr + ' seconds'
                 print(string)
-                # if uselookup:
-                #     print('lookup table used ' + 
-                #           str(lookup_found_counter) + ' times')
 
         # get the initial position
         init_pos = X0array[iproton]
@@ -242,7 +239,8 @@ def run_tof_model(scan_param, Xfunc, uselookup=False, updatelookup=False,
                 
     elapsed = time.time() - t
     
-    print('total simulation time: ' + str(elapsed))
+    elapsed = '{:3.2f}'.format(elapsed)
+    print('total simulation time: ' + str(elapsed) + ' seconds')
     if uselookup and progress:
         print('lookup table used ' + str(lookup_found_counter) + ' times')
     
