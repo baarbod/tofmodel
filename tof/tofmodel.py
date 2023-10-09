@@ -21,13 +21,14 @@ def get_pulse_targets(scan_param):
     tr_vect = np.array(range(npulse)) * tr
     timing_array = tr_vect + alpha
     timing_array = timing_array.T
+
     pulse_target_slice = np.repeat(np.array(range(nslice)), npulse)
     pulse_timing = np.reshape(timing_array.T, npulse * nslice)
     pulse_slice_tuple = [(pulse_timing[i], pulse_target_slice[i])
                          for i in range(0, len(pulse_timing))]
     pulse_slice_tuple = sorted(pulse_slice_tuple)
 
-    # Unpack timing-slice tuple
+    # unpack timing-slice tuple
     pulse_slice_tuple_unpacked = list(zip(*pulse_slice_tuple))
     timings = np.array(pulse_slice_tuple_unpacked[0])
     pulse_slice = np.array(pulse_slice_tuple_unpacked[1])
@@ -35,7 +36,7 @@ def get_pulse_targets(scan_param):
 
 
 def match_pulse_to_tr(npulse, nslice):
-    # Define array of TR cycles that each pulse belongs to
+    # define array of TR cycles that each pulse belongs to
     pulse_tr_actual = []
     for ipulse in range(npulse):
         tr_block = ipulse * np.ones(nslice)
@@ -44,10 +45,13 @@ def match_pulse_to_tr(npulse, nslice):
     return pulse_tr_actual
 
 
-def set_init_positions(x_func, tr, w, npulse, nslice, dx, showplot=True):
-    # Initialize protons for simulation
-    dummyt = np.arange(0, tr * npulse, tr / 10)
-    print('Finding initial proton positions...')
+def set_init_positions(x_func, tr, w, npulse, nslice, dx,
+                       showplot=True, progress=False):
+    # initialize protons for simulation
+    dummyt = np.arange(0, tr*npulse, tr/10)
+    print('=================================================================')
+    if progress:
+        print('Finding initial proton positions...')
 
     if showplot:
         fig, ax = plt.subplots(nrows=1, ncols=1)
@@ -102,13 +106,16 @@ def set_init_positions(x_func, tr, w, npulse, nslice, dx, showplot=True):
 
     if xupper < xlower:
         print('WARNING: xupper is less than xlower. Check proton initialization')
-    print('setting lower bound to ' + str(xlower) + ' cm')
-    print('setting upper bound to ' + str(xupper) + ' cm')
+    if progress:
+        print('setting lower bound to ' + str(xlower) + ' cm')
+        print('setting upper bound to ' + str(xupper) + ' cm')
     x0_array = np.arange(xlower, xupper, dx)
     return x0_array
 
 
-def run_tof_model(scan_param, x_func, uselookup=True, updatelookup=False, showplot=True):
+def run_tof_model(scan_param, x_func, uselookup=False, updatelookup=False,
+                  showplot=False, progress=False):
+    
     # update lookup only makes sense if using lookup table
     if not uselookup:
         updatelookup = False
@@ -127,7 +134,7 @@ def run_tof_model(scan_param, x_func, uselookup=True, updatelookup=False, showpl
 
     # set the proton initial positions
     dx = 0.01
-    x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, showplot=showplot)
+    x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, showplot=showplot, progress=progress)
     nproton = np.size(x0_array)
     nproton_per_slice = int(w / dx)
 
@@ -155,24 +162,26 @@ def run_tof_model(scan_param, x_func, uselookup=True, updatelookup=False, showpl
             path_lookup = os.path.abspath(os.path.join(__file__, "../..", "lookup_table.pkl"))
             with open(path_lookup, "rb") as f:
                 lookup = pickle.load(f)
+                print('-----------------------------------------------------------------')
                 print('Found lookup table of size ' + str(len(lookup)) + '!')
                 print('Lookup table path: ' + path_lookup)
         except:
             print('No lookup table found. Continuing...')
             lookup = {}
         lookup_found_counter = 0
-
+    if progress:
+        print('-----------------------------------------------------------------')
+    
     # main loop which computes proton signal contributions
     for iproton in range(nproton):
 
         # display progress message
-        if (iproton % fraction) == 0:
-            tnow = time.time() - t
-            tstr = '{:3.2f}'.format(tnow)
-            string = str(iproton) + ' protons at ' + tstr + ' seconds'
-            print(string)
-            if uselookup:
-                print('lookup table used ' + str(lookup_found_counter) + ' times')
+        if progress:
+            if (iproton % fraction) == 0:
+                tnow = time.time()-t
+                tstr = '{:3.2f}'.format(tnow)
+                string = str(iproton) + ' protons at ' + tstr + ' seconds'
+                print(string)
 
         # get the initial position
         init_pos = x0_array[iproton]
@@ -184,7 +193,7 @@ def run_tof_model(scan_param, x_func, uselookup=True, updatelookup=False, showpl
         # convert absolute positions to slice location
         proton_slice = np.floor(proton_position / w)
 
-        # find pulses that this proton recieved
+        # find pulses that this proton received
         match_cond = pulse_slice == proton_slice
         pulse_recieve_ind = np.where(match_cond)[0]
 
@@ -232,8 +241,11 @@ def run_tof_model(scan_param, x_func, uselookup=True, updatelookup=False, showpl
                 lookup[key] = s_for_proton
 
     elapsed = time.time() - t
-    print(' ')
-    print('total simulation time: ' + str(elapsed))
+
+    elapsed = '{:3.2f}'.format(elapsed)
+    print('total simulation time: ' + str(elapsed) + ' seconds')
+    if uselookup and progress:
+        print('lookup table used ' + str(lookup_found_counter) + ' times')
 
     # save the updated lookup table
     if uselookup and updatelookup:
@@ -241,10 +253,8 @@ def run_tof_model(scan_param, x_func, uselookup=True, updatelookup=False, showpl
         with open(path_lookup, "wb") as f:
             pickle.dump(lookup, f)
         print('Finished saving.')
-
-        # # Check conservation of protons
-    # err_statement = 'Warning: proton conservation failed - check s_counter.'
-    # assert np.all(s_counter == nproton_per_slice), err_statement
+    print('=================================================================')
+    print(' ')
 
     # Divide after summing contributions; signal is the average of protons
     signal = signal / nproton_per_slice
