@@ -3,4 +3,5 @@ __pycache__
 *.log
 *egg-info
 lookup_table.pkl
+.idea
 results/
