@@ -16,9 +16,13 @@ def compute_position_constant(t, x0, v0):
 
 def compute_position_sine(t, x0, v1, v2, w0):
     amplitude = (v2 - v1) / 2
-    offset = (v1 + amplitude) * 2
-    return offset * t / 2 + amplitude / w0 * np.sin(w0 * t) + x0
+    offset = v1 + amplitude
+    return offset*t + amplitude / w0 * np.sin(w0 * t) + x0
 
+def compute_position_sine_phase(t, x0, v1, v2, w0, phase):
+    amplitude = (v2 - v1) / 2
+    offset = v1 + amplitude
+    return offset*t + amplitude / w0 * np.sin(w0 * (t-phase)) + x0 - 0*amplitude / w0 * np.sin(-w0*phase)
 
 def compute_position_sine_spatial(t_eval, x0, v1, v2, w0, xarea, area):
     def func(t, x, v1, v2, w0, xarea, area):
@@ -60,6 +64,25 @@ def compute_position_fourier(t, x0, an, bn, w0):
     term = term.squeeze()
     return offset * t / 2 + term + k
 
+def compute_position_fourier_phase(t, x0, an, bn, w0, phase):
+    offset = np.array(an[0])
+    an = np.array(an[1:])
+    bn = np.array(bn)
+    n = np.size(an)
+    n_vector = np.ones((n, 1))
+
+    an = np.reshape(an, (n, 1))
+    bn = np.reshape(bn, (n, 1))
+    w0 = np.reshape(w0, (n, 1))
+    phase = np.reshape(phase, (n, 1))
+    k = np.sum(bn / (w0 * n_vector)) + x0
+    if n == 1:
+        term = an / w0 * np.sin(w0 * (t-phase)) - bn / w0 * np.cos(w0 * (t-phase))
+    else:
+        tt = an / (w0 * n_vector) * np.sin(w0 * n_vector * (t-phase)) - bn / (w0 * n_vector) * np.cos(w0 * n_vector * (t-phase))
+        term = np.sum(tt, axis=0)
+    term = term.squeeze()
+    return offset * t / 2 + term + k
 
 def compute_position_fourier_spatial(t_eval, x0, an, bn, w0, xarea, area):
     def func(t, x, an, bn, w0, xarea, area):
