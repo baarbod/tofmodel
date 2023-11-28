@@ -104,13 +104,15 @@ def main():
     tup = s_proton[0]
     pulse_recieve_times = [pair[0] for pair in tup]
     dts = list(np.diff(pulse_recieve_times))
-    dt_list = list([np.float('nan')])
+    dt_list = list([float('nan')])
     dt_list = np.array(dt_list + dts)
     fig, ax = plot_Mt_curve(scan_param, dt_list)
     ax.set_xlim(0, 12)
     ax.set_box_aspect(1)
     figname = 'results/' + 'single_proton_Mt_curve.svg'
     fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
+    figname = 'results/' + 'single_proton_Mt_curve.png'
+    fig.savefig(figname, bbox_inches="tight", format='png', dpi=1200)
     
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.set_ylim(-0.65, 2*w + 0.05)
@@ -139,9 +141,9 @@ def main():
     # draw position-time curves that fade based on signal evolution
     for x0, val_tuple in zip(X0array, s_proton):
         P = Xfunc(trvect, x0)
-        # draw_fading_curve(ax, trvect, P, val_tuple, lw=6, s=1500,
-                          # marker="$+RF$")
-        draw_fading_curve(ax, trvect, P, val_tuple, lw=6-1, s=150/5)
+        draw_fading_curve(ax, trvect, P, val_tuple, lw=6, s=1500,
+                          marker="$+RF$")
+        # draw_fading_curve(ax, trvect, P, val_tuple, lw=6-1, s=150/5)
         
     for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] +
                  ax.get_xticklabels() + ax.get_yticklabels()):
@@ -154,7 +156,9 @@ def main():
     plt.show()
     figname = 'results/' + 'single_proton_trajectory.svg'
     fig.savefig(figname, bbox_inches="tight", format='svg', dpi=300)
-
+    figname = 'results/' + 'single_proton_trajectory.png'
+    fig.savefig(figname, bbox_inches="tight", format='png', dpi=1200)
+    
 def draw_fading_curve(ax, x, y, val_tuple, lw=2, s=None, marker=None):
 
     xp = np.zeros(len(val_tuple))
@@ -290,7 +294,9 @@ def plot_Mt_curve(scan_param, dt_list):
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.set_xlabel('# Pulse Recieved') 
-    ax.set_ylabel('Transverse Magnetization (a.u.)') 
+    ax.set_ylabel('$M_{T}$ (a.u.)') 
+    params = {'mathtext.default': 'regular' }          
+    plt.rcParams.update(params)
     # ax.set_xlim(10, 20)
     # ax.set_ylim(-0.15, scan_param['num_slice']*w + 0.15)
     plt.tight_layout(pad=3)
