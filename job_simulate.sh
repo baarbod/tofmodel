@@ -12,4 +12,4 @@
 #SBATCH --error=/om/user/bashen/repositories/tof-inverse/data/simulated/ongoing/error_%A_%a.txt  
 
 config_path=/om/user/bashen/repositories/tof-inverse/config/config.json
-python simulate_TD.py $SLURM_ARRAY_TASK_ID $config_path
+python simulate.py $SLURM_ARRAY_TASK_ID $config_path
