@@ -20,13 +20,13 @@ def define_x_func(main_frequencies=None, an_vals=None, phase=None):
 
 
 # run tof model using the position-time function
-def run_model(x_func, scan_param):
+def run_model(x_func, scan_param, progress=False, showplot=False):
     
     # run model 
     signal = tm.run_tof_model(scan_param, x_func,
-                              showplot=False,
+                              showplot=showplot,
                               uselookup=False,
-                              progress=False)
+                              progress=progress)
     s_three_slices = signal[:, 0:3]
     
     return s_three_slices
@@ -35,7 +35,7 @@ def run_model(x_func, scan_param):
 def simulate_parameter_set(idx, input_data):
     
     # unpack tuple of inputs
-    frequencies, v_offset, rand_phase, velocity_input, scan_param, Xshape, Xtype, Yshape, Ytype, task_id = input_data
+    frequencies, v_offset, rand_phase, velocity_input, scan_param, Xshape, Xtype, Yshape, Ytype, task_id, slc_offset, area_gauss_width, area_curve_fact = input_data
     
     # get shared memory arrays 
     Xshm = msm.SharedMemory(name=f"Xarray{task_id}")
@@ -43,11 +43,22 @@ def simulate_parameter_set(idx, input_data):
     X = np.ndarray(Xshape, dtype=Xtype, buffer=Xshm.buf)
     Y = np.ndarray(Yshape, dtype=Ytype, buffer=Yshm.buf)
     
+    xoffset = slc_offset # cm
+    width = area_gauss_width # cm
+    xarea = np.linspace(-3, 3, Xshape[2]) # cm
+    N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
+    area = area_curve_fact*N(xarea, xoffset, width)
+    
     # define position-time function based on parameter set
     x_func = define_x_func(main_frequencies=frequencies, an_vals=[v_offset, *velocity_input], phase=rand_phase)
     
+    tdummy = np.linspace(0, 200, 1000)
+    xdummy = x_func(tdummy, 0)
+    vdummy = (np.diff(xdummy)/(tdummy[1]-tdummy[0])) 
+    x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=tdummy[:999], vts=vdummy, xarea=xarea, area=area)
+    
     # solve the tof forward model
-    s_raw = run_model(x_func, scan_param)
+    s_raw = run_model(x_func_area, scan_param)
     
     # skip first 20 points
     s_raw = s_raw[20:, :]
@@ -65,6 +76,8 @@ def simulate_parameter_set(idx, input_data):
     X[idx, 0, :] = s[:, 0].squeeze()
     X[idx, 1, :] = s[:, 1].squeeze()
     X[idx, 2, :] = s[:, 2].squeeze()
+    X[idx, 3, :] = xarea
+    X[idx, 4, :] = area
     
     tr = scan_param['repetition_time']
     tdummy = tr * np.arange(0, s.shape[0]+20)
