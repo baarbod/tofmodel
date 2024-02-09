@@ -57,7 +57,7 @@ def set_init_positions(x_func, tr, w, npulse, nslice, dx,
         fig, ax = plt.subplots(nrows=1, ncols=1)
 
     # define range of potential positions
-    x0test_range = np.arange(-800, 800, 1)
+    x0test_range = np.arange(-900, 900, 1)
 
     # initialize
     arrmin = np.zeros(np.size(x0test_range))
@@ -88,7 +88,10 @@ def set_init_positions(x_func, tr, w, npulse, nslice, dx,
 
     # define bounds with some padding
     xlower = x0test_range[min(protons_to_include) - 5]
-    xupper = x0test_range[max(protons_to_include) + 5]
+    try:
+        xupper = x0test_range[max(protons_to_include) + 5]
+    except:
+        xupper = x0test_range[-1]
 
     if showplot:
         ax.plot(x0test_range, x0test_range, label='x0')
