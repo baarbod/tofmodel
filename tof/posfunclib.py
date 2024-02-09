@@ -26,13 +26,14 @@ def compute_position_sine_phase(t, x0, v1, v2, w0, phase):
 
 def compute_position_sine_spatial(t_eval, x0, v1, v2, w0, xarea, area):
     def func(t, x, v1, v2, w0, xarea, area):
-        ind0 = xarea == 0
+        # ind0 = xarea == 0
+        ind0 = np.abs(xarea).argmin() # find where xarea is zero
         area0 = area[ind0]
         diffarray = np.absolute(xarea - x)
         ind = diffarray.argmin()
         a = area[ind]
-        if a < 0.2:
-            a = 0.2
+        if a < 0.05:
+            a = 0.05
         pos_term = area0 / a
 
         amplitude = (v2 - v1) / 2
@@ -89,13 +90,14 @@ def compute_position_fourier_phase(t, x0, an, bn, w0, phase):
 
 def compute_position_fourier_spatial(t_eval, x0, an, bn, w0, xarea, area):
     def func(t, x, an, bn, w0, xarea, area):
-        ind0 = xarea == 0
+        # ind0 = xarea == 0
+        ind0 = np.abs(xarea).argmin() # find where xarea is zero
         area0 = area[ind0]
         diffarray = np.absolute(xarea - x)
         ind = diffarray.argmin()
         a = area[ind]
-        if a < 0.2:
-            a = 0.2
+        if a < 0.05:
+            a = 0.05
         pos_term = area0 / a
 
         offset = np.array(an[0])
@@ -156,13 +158,14 @@ def compute_position_numeric(t_eval, x0, tr_vect, xcs):
 
 def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     def func(t, x, vts, xarea, area):
-        ind0 = xarea == 0
+        # ind0 = xarea == 0
+        ind0 = np.abs(xarea).argmin() # find where xarea is zero
         area0 = area[ind0]
         diffarray = np.absolute(xarea - x)
         ind = diffarray.argmin()
         a = area[ind]
-        if a < 0.2:
-            a = 0.2
+        if a < 0.05:
+            a = 0.05
 
         pos_term = area0 / a
 
