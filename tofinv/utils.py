@@ -63,7 +63,7 @@ def load_data(subject, fmriruns, pcruns, mctimes=None, subdir='data/measured'):
     return s_raw, v
 
 
-def input_batched_signal_into_NN(s_data_for_nn, NN_model, feature_length=200):
+def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, feature_length=200):
     nwindows = int(s_data_for_nn.shape[0] / feature_length)
     velocity_NN = np.zeros(nwindows * feature_length)
     for window in range(nwindows):
@@ -72,11 +72,13 @@ def input_batched_signal_into_NN(s_data_for_nn, NN_model, feature_length=200):
         s_window = s_data_for_nn[ind1:ind2, :]
         
         # put features in the input array
-        x = np.zeros((1, 3, feature_length))
+        x = np.zeros((1, 5, feature_length))
         x[0, 0, :] = s_window[:, 0].squeeze()
         x[0, 1, :] = s_window[:, 1].squeeze()
         x[0, 2, :] = s_window[:, 2].squeeze()
-
+        x[0, 3, :] = xarea
+        x[0, 4, :] = area
+        
         # run the tof inverse model using the features as input
         x = torch.tensor(x, dtype=torch.float32)
         y_predicted = NN_model(x).detach().numpy().squeeze()
