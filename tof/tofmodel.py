@@ -57,7 +57,7 @@ def set_init_positions(x_func, tr, w, npulse, nslice, dx,
         fig, ax = plt.subplots(nrows=1, ncols=1)
 
     # define range of potential positions
-    x0test_range = np.arange(-900, 900, 1)
+    x0test_range = np.arange(-1500, 1500, 1)
 
     # initialize
     arrmin = np.zeros(np.size(x0test_range))
