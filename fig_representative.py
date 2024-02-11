@@ -16,6 +16,10 @@ import inflowan.processing as proc
 
 from config.path import ROOT_DIR
 
+from functools import partial
+from tof import posfunclib as pfl
+from tof import tofmodel as tm
+
 from inflowan.plotting import set_default_rcParams
 set_default_rcParams()
 import matplotlib as mpl
@@ -32,7 +36,7 @@ def save_figure(name, fig):
     fig.savefig(figpath, format='svg', dpi=300)
 
 
-def routine(subject, pcruns, fmriruns, param, model_state, mctimes=None):
+def routine(subject, pcruns, fmriruns, param, model_state, slc1=0, phantom=False, mctimes=None):
 
     fstart = param['data_simulation']['frequency_start']
     fend = param['data_simulation']['frequency_end']
@@ -47,6 +51,18 @@ def routine(subject, pcruns, fmriruns, param, model_state, mctimes=None):
 
     trepi = 0.504
     trpc = 1.00985
+
+    if phantom:
+        xarea = np.linspace(-3, 3, 200)
+        area = 0.25*np.ones(np.size(xarea))
+    else:
+        filepath = os.path.join(ROOT_DIR, 'data', 'measured', subject, 'area.txt')
+        area = np.loadtxt(filepath)
+        xarea = 1 * np.arange(np.size(area))
+        xarea_new = 0.1*np.linspace(0, 10*np.size(area), 200)
+        area = np.interp(xarea_new, xarea, area)
+        xarea = xarea_new - slc1
+        xarea *= 0.1 # convert the depth to cm
     
     # load fmri and phase contrast signals
     s_raw, v = utils.load_data(subject, fmriruns, pcruns, mctimes=mctimes)
@@ -62,27 +78,32 @@ def routine(subject, pcruns, fmriruns, param, model_state, mctimes=None):
     f_plot, x2_true = spec.compute_frequency_spectra(s_data_for_nn[:, 1], trepi, method='welch', NW=2)
     f_plot, x3_true = spec.compute_frequency_spectra(s_data_for_nn[:, 2], trepi, method='welch', NW=2)
     
-    velocity_NN = utils.input_batched_signal_into_NN(s_data_for_nn, model)
-
+    # velocity_NN = utils.input_batched_signal_into_NN(s_data_for_nn, model)
+    velocity_NN = utils.input_batched_signal_into_NN_area(s_data_for_nn, model, xarea, area)
+    
     f_plot1, xv = spec.compute_frequency_spectra(v - np.mean(v), trpc, method='welch', NW=4)
     f_plot2, xvdummy = spec.compute_frequency_spectra(velocity_NN - np.mean(velocity_NN), trepi, method='welch', NW=2)
     
-    velocity_NN = np.expand_dims(velocity_NN, axis=1)
-    x_func = inf_utils.velocity_to_xfunc(velocity_NN, trepi)
     param['scan_param']["num_pulse"] = velocity_NN.size
-    s_raw = sim.run_model(x_func, param['scan_param'])
-    s = proc.scale_epi(s_raw)
-    s_pred_demean = s - np.mean(s, axis=0)
+
+    # define the position function based on area and velocity
+    tr_vect = trepi*np.arange(0, np.size(velocity_NN))
+    x_func2 = partial(pfl.compute_position_numeric_spatial, tr_vect=tr_vect, vts=velocity_NN, xarea=xarea, area=area)
+    s_raw = sim.run_model(x_func2, param['scan_param'], progress=True, showplot=False)
+    s_raw = s_raw[20:, :]
+    sdata = proc.scale_epi(s_raw)
+    s_pred_demean = sdata - np.mean(sdata, axis=0)
+    
     f_plot_model, x1_true_model = spec.compute_frequency_spectra(s_pred_demean[:, 0], trepi, method='welch', NW=2)
     f_plot_model, x2_true_model = spec.compute_frequency_spectra(s_pred_demean[:, 1], trepi, method='welch', NW=2)
     f_plot_model, x3_true_model = spec.compute_frequency_spectra(s_pred_demean[:, 2], trepi, method='welch', NW=2)
     
     return x1_true, x2_true, x3_true, f_plot, x1_true_model, x2_true_model, x3_true_model, f_plot_model, f_plot1, xv, f_plot2, xvdummy
 
-config_path = '/om/user/bashen/repositories/tof-inverse/experiments/2024-01-17_08:53:05_training_run_fmv/config_used.json' 
+config_path = '/om/user/bashen/repositories/tof-inverse/experiments/2024-02-11_09:35:24_training_run_fmv/config_used.json' 
 with open(config_path, "r") as jsonfile:
     param = json.load(jsonfile)
-state_filename = '/om/user/bashen/repositories/tof-inverse/experiments/2024-01-17_08:53:05_training_run_fmv/model_state_250000_samples.pth'
+state_filename = '/om/user/bashen/repositories/tof-inverse/experiments/2024-02-11_09:35:24_training_run_fmv/model_state_100000_samples.pth'
 model_state = torch.load(state_filename)
 
 # load config dictionary with run information   
@@ -113,17 +134,18 @@ plt.subplots_adjust(wspace=0.8)
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # HUMAN BREATH 
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-subject_num = 4#3#4
+subject_num = 0
 dset = inputs[subject_num]
 subject = dset['name']
 postype = dset['postype']
 pcruns = dset['pc']
 fmriruns = dset['fmri']
 mctimes = dset['mctimes']
+slc1 = dset['slc']
 
 x1_true, x2_true, x3_true, f_plot, \
     x1_true_model, x2_true_model, x3_true_model, f_plot_model, \
-        f_plot1, xv, f_plot2, xvdummy = routine(subject, pcruns, fmriruns, param, model_state, mctimes=mctimes)
+        f_plot1, xv, f_plot2, xvdummy = routine(subject, pcruns, fmriruns, param, model_state, slc1=slc1, mctimes=mctimes)
 
 ax = axes[2, 0]
 X = np.column_stack((x1_true, x2_true, x3_true))
@@ -145,17 +167,19 @@ ax.set_xticks([0, 0.5, 1])
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # HUMAN REST 
 #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-subject_num = 9
+subject_num = 2
 dset = inputs[subject_num]
 subject = dset['name']
 postype = dset['postype']
 pcruns = dset['pc_rest']
 fmriruns = dset['fmri_rest']
 mctimes = dset['mctimes_rest']
+slc1 = dset['slc']
+
 try:
     x1_true, x2_true, x3_true, f_plot, \
         x1_true_model, x2_true_model, x3_true_model, f_plot_model, \
-            f_plot1, xv, f_plot2, xvdummy = routine(subject, pcruns, fmriruns, param, model_state, mctimes=mctimes)
+            f_plot1, xv, f_plot2, xvdummy = routine(subject, pcruns, fmriruns, param, model_state, slc1=slc1, mctimes=mctimes)
 except KeyError:
     pass
 
@@ -185,7 +209,7 @@ with open(config_path, "r") as jsonfile:
         param_data = json.load(jsonfile)
 inputs = param_data['phantom_data']
 
-subject_num = 4
+subject_num = 0
 dset = inputs[subject_num]
 subject = dset['name']
 pcruns = dset['pc']
@@ -195,7 +219,7 @@ vel = dset['velocity']
 
 x1_true, x2_true, x3_true, f_plot, \
     x1_true_model, x2_true_model, x3_true_model, f_plot_model, \
-        f_plot1, xv, f_plot2, xvdummy = routine(subject, pcruns, fmriruns, param, model_state, mctimes=None)
+        f_plot1, xv, f_plot2, xvdummy = routine(subject, pcruns, fmriruns, param, model_state, phantom=True, mctimes=None)
 
 ax = axes[0, 0]
 X = np.column_stack((x1_true, x2_true, x3_true))
@@ -215,6 +239,6 @@ ax.plot(f_plot2, xvdummy, color='seagreen', linewidth=0.5)
 ax.set_xticks([0, 0.5, 1]) 
 
 
-#---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+# #---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 save_figure(f"TD_all_plots", fig)

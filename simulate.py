@@ -85,8 +85,11 @@ for isample in range(batch_size):
         upper = bound_array[idx, 1] 
         rand_numbers[idx] = np.random.uniform(low=lower, high=upper)
         rand_phase[idx] = np.random.uniform(low=0, high=1/frequency)
-        v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)
-    input_data.append(tuple([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), scan_param, Xshape, Xtype, Yshape, Ytype, task_id]))
+        v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)    
+    slc_offset = np.random.uniform(low=-0.8, high=0.8)
+    area_gauss_width = np.random.uniform(low=0.4, high=0.8)
+    area_curve_fact = np.random.uniform(low=0.4, high=1)
+    input_data.append(tuple([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), scan_param, Xshape, Xtype, Yshape, Ytype, task_id, slc_offset, area_gauss_width, area_curve_fact]))
 
 X = np.zeros(Xshape)
 Y = np.zeros(Yshape)

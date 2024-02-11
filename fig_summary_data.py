@@ -33,7 +33,7 @@ def save_figure(name, fig):
     fig.savefig(figpath, format='svg', dpi=300)
 
 
-def compute_error(subject, pcruns, fmriruns, param, model_state, mctimes=None):
+def compute_error(subject, pcruns, fmriruns, param, model_state, slc1=0, phantom=False, mctimes=None):
 
     fstart = param['data_simulation']['frequency_start']
     fend = param['data_simulation']['frequency_end']
@@ -49,6 +49,18 @@ def compute_error(subject, pcruns, fmriruns, param, model_state, mctimes=None):
     trepi = 0.504
     trpc = 1.00985
     
+    if phantom:
+        xarea = np.linspace(-3, 3, 200)
+        area = 0.25*np.ones(np.size(xarea))
+    else:
+        filepath = os.path.join(ROOT_DIR, 'data', 'measured', subject, 'area.txt')
+        area = np.loadtxt(filepath)
+        xarea = 1 * np.arange(np.size(area))
+        xarea_new = 0.1*np.linspace(0, 10*np.size(area), 200)
+        area = np.interp(xarea_new, xarea, area)
+        xarea = xarea_new - slc1
+        xarea *= 0.1 # convert the depth to cm
+    
     # load fmri and phase contrast signals
     s_raw, v = utils.load_data(subject, fmriruns, pcruns, mctimes=mctimes)
     # nan values from combined array
@@ -59,7 +71,8 @@ def compute_error(subject, pcruns, fmriruns, param, model_state, mctimes=None):
     s_data = proc.scale_epi(s_raw)
     s_data_for_nn = s_data - np.mean(s_data, axis=0)
 
-    velocity_NN = utils.input_batched_signal_into_NN(s_data_for_nn, model)
+    # velocity_NN = utils.input_batched_signal_into_NN(s_data_for_nn, model)
+    velocity_NN = utils.input_batched_signal_into_NN_area(s_data_for_nn, model, xarea, area)
     
     f_plot1, xv = spec.compute_frequency_spectra(v - np.mean(v), trpc, method='welch', NW=4)
     f_plot2, xvdummy = spec.compute_frequency_spectra(velocity_NN - np.mean(velocity_NN), trepi, method='welch', NW=2)
@@ -73,10 +86,10 @@ def compute_error(subject, pcruns, fmriruns, param, model_state, mctimes=None):
 
     return err
 
-config_path = '/om/user/bashen/repositories/tof-inverse/experiments/2024-01-17_08:53:05_training_run_fmv/config_used.json' 
+config_path = '/om/user/bashen/repositories/tof-inverse/experiments/2024-02-11_09:35:24_training_run_fmv/config_used.json' 
 with open(config_path, "r") as jsonfile:
     param = json.load(jsonfile)
-state_filename = '/om/user/bashen/repositories/tof-inverse/experiments/2024-01-17_08:53:05_training_run_fmv/model_state_250000_samples.pth'
+state_filename = '/om/user/bashen/repositories/tof-inverse/experiments/2024-02-11_09:35:24_training_run_fmv/model_state_100000_samples.pth'
 model_state = torch.load(state_filename)
 
 # load config dictionary with run information   
@@ -104,7 +117,8 @@ for i in range(len(inputs)):
     pcruns = dset['pc']
     fmriruns = dset['fmri']
     mctimes = dset['mctimes']
-    err = compute_error(subject, pcruns, fmriruns, param, model_state, mctimes=mctimes)
+    slc1 = dset['slc']
+    err = compute_error(subject, pcruns, fmriruns, param, model_state, slc1=slc1, mctimes=mctimes)
         
     ERRlist_hb.append(err)
 
@@ -123,11 +137,12 @@ for i in range(len(inputs)):
     dset = inputs[i]
     subject = dset['name']
     postype = dset['postype']
+    slc1 = dset['slc']
     try:
         pcruns = dset['pc_rest']
         fmriruns = dset['fmri_rest']
         mctimes = dset['mctimes_rest']
-        err = compute_error(subject, pcruns, fmriruns, param, model_state, mctimes=mctimes)
+        err = compute_error(subject, pcruns, fmriruns, param, model_state, slc1=slc1, mctimes=mctimes)
         ERRlist_hr.append(err)
     except KeyError:
         pass
@@ -156,7 +171,7 @@ for i in range(len(inputs)):
     fmriruns = dset['fmri']
     freq = dset['freq']
     vel = dset['velocity']
-    err = compute_error(subject, pcruns, fmriruns, param, model_state)
+    err = compute_error(subject, pcruns, fmriruns, param, model_state, phantom=True)
 
     ERRlist_ph.append(err)
 
