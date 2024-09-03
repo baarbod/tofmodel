@@ -3,20 +3,24 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import os
 import pickle
 import json
 import argparse
-
+import time 
 from tofinv.models import TOFinverse
 import tofinv.utils as utils
-
 from config.path import ROOT_DIR
+
 
 parser = argparse.ArgumentParser(description='Script for training neural network on simulated dataset')
 parser.add_argument('--datafolder', help='name of folder containing simulated dataset and config file')
+parser.add_argument('--epochs', default=10, type=int, help='number of total epochs to run (default: 10)')
+parser.add_argument('--batch', default=64, type=int, help='batch size (default: 64)')
+parser.add_argument('--lr', default=0.001, type=float, help='initial learning rate (default: 0.1)')
 args = parser.parse_args()
 
 sim_dataset_path = os.path.join(ROOT_DIR, "data", "simulated", args.datafolder)
@@ -37,13 +41,8 @@ with open(training_data, "rb") as f:
 X = X.astype(float)
 y = y.astype(float)
     
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=param['training']['test_size'])
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
 param['training_data'] = training_data
-
-# hyperparameters
-batch_size = param['training']['batch_size']
-learning_rate = param['training']['learning_rate']
-num_epochs = param['training']['num_epochs']
 
 # create an instance of the TOFinverse model
 nfeatures = param['data_simulation']['num_input_features']
@@ -60,34 +59,69 @@ y_test = torch.tensor(y_test, dtype=torch.float32)
 
 # create data loader objects
 train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch, shuffle=True)
+test_dataset = torch.utils.data.TensorDataset(X_test, y_test)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch, shuffle=False)
 
 # initialize the model and optimizer
 model = TOFinverse(nfeatures=nfeatures, feature_size=X_train.shape[2],
                    output_size=output_size)
-optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+optimizer = optim.Adam(model.parameters(), lr=args.lr)
 criterion = nn.MSELoss()
 
-# training loop
-loss_epoch = []
-for epoch in range(num_epochs):
-    running_loss = 0.0
-    for i, (inputs, labels) in enumerate(train_loader, 0):
+def train(loader, model, criterion, optimizer):
+    model.train()
+    epoch_loss = 0.0
+    for inputs, labels in loader:
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = criterion(outputs, labels.squeeze())
         loss.backward()
         optimizer.step()
-        running_loss += loss.item()
-        if (i + 1) % 10 == 0:
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Step [{i + 1}/{len(train_loader)}], Loss: {loss.item():.4f}')
-    loss_epoch.append(running_loss)
+        epoch_loss += loss.item() * inputs.size(0)
+    avg_loss = epoch_loss / len(loader.dataset)
+    return avg_loss
 
-fig, ax= plt.subplots()
-ax.plot(loss_epoch)
+
+def test(loader, model, criterion):
+    model.eval()
+    epoch_loss = 0.0
+    with torch.no_grad():
+        for inputs, labels in loader:
+            outputs = model(inputs)
+            loss = criterion(outputs, labels.squeeze())
+            epoch_loss += loss.item() * inputs.size(0)
+    avg_loss = epoch_loss / len(loader.dataset)
+    return avg_loss
+
+
+# training loop
+train_losses = []
+test_losses = []
+time_start = time.time()
+for epoch in range(args.epochs):
+
+    train_loss = train(train_loader, model, criterion, optimizer)
+    test_loss = test(test_loader, model, criterion)
+    
+    train_losses.append(train_loss)
+    test_losses.append(test_loss)
+    print(f'Epoch [{epoch+1}/{args.epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}')
+
+time_end = time.time()
+training_time = time_end - time_start
+print(f"Total time for training loop: {training_time:.4f} seconds")
+
+# plot loss vs. epoch for training and evaluation data
+fig_loss, ax= plt.subplots()
+ax.plot(train_losses, label='train data')
+with torch.no_grad():
+    ax.plot(np.array(test_losses), label='test data')
 ax.set_xlabel('Epoch')
-ax.set_ylabel('Running MSE loss')
-print('finished Training')
+ax.set_ylabel('Loss')
+ax.legend()
+ax.grid()
+ax.xaxis.set_ticks(np.arange(0, args.epochs, 4))
 
 # evaluate model accuracy using test data
 model.eval()
@@ -108,7 +142,7 @@ if not os.path.exists(folder):
 
 # save plot of MSE loss vs. epochs
 figpath = os.path.join(folder, 'MSE_loss_vs_epochs.png')
-fig.savefig(figpath, format='png')
+fig_loss.savefig(figpath, format='png')
 
 # log config file used for training
 config_path = os.path.join(folder, 'config_used.json')
