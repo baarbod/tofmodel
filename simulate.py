@@ -63,7 +63,8 @@ Yshape = (batch_size, num_output, output_size)
 
 # set number of pulses based on desired length of spectrum
 scan_param = param['scan_param']
-scan_param["num_pulse"] = input_size + 20
+scan_param["num_pulse"] = input_size
+scan_param["num_pulse_baseline_offset"] = 20
 
 sampling_param = param['sampling']
 fresp_lower = sampling_param['fresp_lower']
@@ -89,7 +90,10 @@ for isample in range(batch_size):
     slc_offset = np.random.uniform(low=-0.8, high=0.8)
     area_gauss_width = np.random.uniform(low=0.4, high=0.8)
     area_curve_fact = np.random.uniform(low=0.4, high=1)
-    input_data.append(tuple([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), scan_param, Xshape, Xtype, Yshape, Ytype, task_id, slc_offset, area_gauss_width, area_curve_fact]))
+    gauss_noise_std = np.random.uniform(low=0.01, high=0.1)
+    input_data.append(tuple([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), 
+                             scan_param, Xshape, Xtype, Yshape, Ytype, task_id, 
+                             slc_offset, area_gauss_width, area_curve_fact, gauss_noise_std]))
 
 X = np.zeros(Xshape)
 Y = np.zeros(Yshape)
