@@ -116,12 +116,7 @@ def set_init_positions(x_func, tr, w, npulse, nslice, dx,
     return x0_array
 
 
-def run_tof_model(scan_param, x_func, uselookup=False, updatelookup=False,
-                  showplot=False, progress=False):
-    
-    # update lookup only makes sense if using lookup table
-    if not uselookup:
-        updatelookup = False
+def run_tof_model(scan_param, x_func, showplot=False, progress=False):
 
     # define scan parameters
     w = scan_param['slice_width']
@@ -158,22 +153,6 @@ def run_tof_model(scan_param, x_func, uselookup=False, updatelookup=False,
 
     # controls how often to display progress message
     fraction = nproton / 10
-
-    # try to load the lookup table dictionary from the file
-    if uselookup:
-        try:
-            path_lookup = os.path.abspath(os.path.join(__file__, "../..", "lookup_table.pkl"))
-            with open(path_lookup, "rb") as f:
-                lookup = pickle.load(f)
-                print('-----------------------------------------------------------------')
-                print('Found lookup table of size ' + str(len(lookup)) + '!')
-                print('Lookup table path: ' + path_lookup)
-        except:
-            print('No lookup table found. Continuing...')
-            lookup = {}
-        lookup_found_counter = 0
-    if progress:
-        print('-----------------------------------------------------------------')
     
     # main loop which computes proton signal contributions
     for iproton in range(nproton):
@@ -203,59 +182,29 @@ def run_tof_model(scan_param, x_func, uselookup=False, updatelookup=False,
         # loop through recieved pulses and compute flow signal
         tprev = float('nan')
 
-        # flag for finding an existing lookup table solution 
-        lookup_found = 0
-
-        if uselookup:
-            try:
-                key = tuple(pulse_recieve_ind)
-                s_list = lookup[key]
-                proton_tr_hits = pulse_tr_actual[pulse_recieve_ind]
-                proton_slc_hits = proton_slice[pulse_recieve_ind]
-                proton_slc_hits = proton_slc_hits.astype(int)
-                signal[proton_tr_hits, proton_slc_hits] += s_list
-                s_counter[proton_tr_hits, proton_slc_hits] += 1
-                lookup_found_counter += 1
-                lookup_found = 1
-            except:
-                lookup_found = 0
-
         # loop through each pulse and compute signal
-        if not lookup_found:
-            dt_list = np.zeros(np.size(pulse_recieve_ind))
-            s_for_proton = []
-            for count, pulse_id in enumerate(pulse_recieve_ind):
-                tnow = timings[pulse_id]
-                dt = tnow - tprev  # correct dt behavior on 1st pulse
-                tprev = tnow
-                dt_list[count] = dt
-                npulse = count + 1  # correcting for zero-based numbering
+        dt_list = np.zeros(np.size(pulse_recieve_ind))
+        s_for_proton = []
+        for count, pulse_id in enumerate(pulse_recieve_ind):
+            tnow = timings[pulse_id]
+            dt = tnow - tprev  # correct dt behavior on 1st pulse
+            tprev = tnow
+            dt_list[count] = dt
+            npulse = count + 1  # correcting for zero-based numbering
 
-                s = fre_signal(npulse, fa, tr, t1, dt_list)
+            s = fre_signal(npulse, fa, tr, t1, dt_list)
 
-                current_tr = pulse_tr_actual[pulse_id]
-                current_slice = proton_slice[pulse_id]
-                current_slice = current_slice.astype(int)
-                signal[current_tr, current_slice] += s
-                s_counter[current_tr, current_slice] += 1
-                s_for_proton.append(s)
-            if uselookup:
-                # store this solution in the lookup table
-                lookup[key] = s_for_proton
+            current_tr = pulse_tr_actual[pulse_id]
+            current_slice = proton_slice[pulse_id]
+            current_slice = current_slice.astype(int)
+            signal[current_tr, current_slice] += s
+            s_counter[current_tr, current_slice] += 1
+            s_for_proton.append(s)
 
     elapsed = time.time() - t
 
     elapsed = '{:3.2f}'.format(elapsed)
     print('total simulation time: ' + str(elapsed) + ' seconds')
-    if uselookup and progress:
-        print('lookup table used ' + str(lookup_found_counter) + ' times')
-
-    # save the updated lookup table
-    if uselookup and updatelookup:
-        print('Saving updated lookup table...')
-        with open(path_lookup, "wb") as f:
-            pickle.dump(lookup, f)
-        print('Finished saving.')
     print('=================================================================')
     print(' ')
 
