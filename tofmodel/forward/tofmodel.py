@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from forward.fresignal import fre_signal_array as fre_signal
 
 
-def run_tof_model(scan_param, x_func, showplot=False, progress=False):
+def simulate_inflow(scan_param, x_func, showplot=False, progress=False):
     """Routine for simulating inflow signals
 
     Parameters
@@ -15,18 +15,18 @@ def run_tof_model(scan_param, x_func, showplot=False, progress=False):
         Scanning parameters
         
     x_func : func
-        Function of x and x0 used to define position dependance of spins
+        Position (cm) as a function of time (s) and initial position (cm)
         
     showplot : bool, optional
-        show plots related to spin position initialization, by default False
+        Show plots related to spin position initialization, by default False
         
     progress : bool, optional
-        print information about simulation progress, by default False
+        Print information about simulation progress, by default False
 
     Returns
     -------
     signal : numpy.ndarray
-        matrix of signal timeseries for each slice
+        Matrix of signal timeseries (a.u.) for each slice
     """
     
     
