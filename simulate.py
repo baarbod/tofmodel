@@ -15,7 +15,7 @@ import tofinv.sampling as vd
 from config.path import ROOT_DIR
 
 debug_mode = 0
-trim_input_length = 0
+trim_input_length = 0 
 
 if debug_mode:
     config_path = os.path.join(ROOT_DIR, "config", "config.json")
@@ -23,6 +23,7 @@ if debug_mode:
             param = json.load(jsonfile)
     task_id = 1   
     nbatch = param['data_simulation']['num_batches']
+    param['data_simulation']['num_cores'] = 1
 else:
     # read config json file
     if len(sys.argv) > 1:
@@ -74,8 +75,17 @@ fcard_upper = sampling_param['fcard_upper']
 voffset_lower = sampling_param['voffset_lower']
 voffset_upper = sampling_param['voffset_upper']
 
+# load subject area information
+config_data_path = '/om/user/bashen/repositories/inflow-analysis/config/config_data.json'
+Ax, Ay, subjects = utils.load_subject_area_matrix(config_data_path, input_size)
+
+# mark start time
+tstart = time.time()
+
 # random sampling constrained by lower and upper bounds
 for isample in range(batch_size):
+    
+    # define velocity amplitudes and timeshifts
     mu = np.random.uniform(low=fresp_lower, high=fresp_upper)
     ff_card = np.random.uniform(low=fcard_lower, high=fcard_upper) 
     bound_array = vd.get_sampling_bounds(frequencies, mu, ff_card=ff_card)
@@ -86,14 +96,25 @@ for isample in range(batch_size):
         upper = bound_array[idx, 1] 
         rand_numbers[idx] = np.random.uniform(low=lower, high=upper)
         rand_phase[idx] = np.random.uniform(low=0, high=1/frequency)
-        v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)    
-    slc_offset = np.random.uniform(low=-0.8, high=0.8)
-    area_gauss_width = np.random.uniform(low=0.4, high=0.8)
-    area_curve_fact = np.random.uniform(low=0.4, high=1)
+        v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)
+        
+    # define noise injection
     gauss_noise_std = np.random.uniform(low=0.01, high=0.1)
+    
+    # define cross-sectional area
+    area_subject_ind = np.random.randint(len(subjects))
+    area_scale_factor = np.random.uniform(low=0.8, high=1.2)
+    slc1_offset = np.random.uniform(low=-1.5, high=1.5)
+    xarea = Ax[:, area_subject_ind]
+    area = Ay[:, area_subject_ind]
+    widest_position = xarea[np.argmax(area)]
+    xarea_sample = xarea - widest_position - slc1_offset
+    area_sample = area_scale_factor * area
+    
+    # store all variables
     input_data.append(tuple([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), 
                              scan_param, Xshape, Xtype, Yshape, Ytype, task_id, 
-                             slc_offset, area_gauss_width, area_curve_fact, gauss_noise_std]))
+                             xarea_sample, area_sample, gauss_noise_std]))
 
 X = np.zeros(Xshape)
 Y = np.zeros(Yshape)
@@ -101,10 +122,7 @@ X_shared = utils.create_shared_memory(X, name=f"Xarray{task_id}")
 Y_shared = utils.create_shared_memory(Y, name=f"Yarray{task_id}")
 
 if trim_input_length:
-    input_data = input_data[:5]
-
-# mark start time
-t = time.time()
+    input_data = input_data[:param['data_simulation']['num_cores']]
 
 # call pool pointing to simulation routine
 if __name__ == '__main__':
@@ -117,7 +135,7 @@ y = np.ndarray(Y.shape, dtype=Y.dtype, buffer=Y_shared.buf)
 
 # mark end time
 tfinal = time.time()
-tstr = '{:3.2f}'.format(tfinal - t)
+tstr = '{:3.2f}'.format(tfinal - tstart)
 print(f"total simulation time = {tstr}")
 
 # create folder associated with this simulation
