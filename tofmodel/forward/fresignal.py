@@ -38,8 +38,8 @@ def fre_signal_array(n, fa, tr, t1, dt_list):
     mz_ss = m0 * (1 - np.exp(-tr / t1)) / (1 - np.exp(-tr / t1) * c)
     exponentials = np.exp(-dt_list / t1)
 
-    exponentials_full = functools.reduce(operator.mul, exponentials[1:n], 1)
-
+    exponentials_full = np.prod(exponentials[1:n])
+    
     # put all terms in array
     full_array = np.ones((n - 1, n - 1))
     for m in range(n - 1):
@@ -51,7 +51,7 @@ def fre_signal_array(n, fa, tr, t1, dt_list):
         s = np.sin(fa) * (mzn_pre - mz_ss)
     else:
         # call prod function on full array
-        full_array_prod = functools.reduce(operator.mul, full_array.T)
+        full_array_prod = np.prod(full_array.T, axis=0)
         mm = np.arange(0, n - 1)
         nummat = 1 - exponentials[n - mm - 1]
         final_mat = c ** mm * nummat / full_array_prod
