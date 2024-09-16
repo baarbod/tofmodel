@@ -1,8 +1,8 @@
 #!/bin/bash                      
 #SBATCH -t 48:00:00         
 #SBATCH -N 1 
-#SBATCH -n 32               
-# #SBATCH --mem=32G                
+#SBATCH -n 8               
+#SBATCH --mem=16G                
 #SBATCH --job-name=sim_data
 #SBATCH --array=1-100%15  
 #SBATCH --mail-user=bashen@bu.edu
