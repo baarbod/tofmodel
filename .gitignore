@@ -2,13 +2,4 @@
 __pycache__
 *.log
 *egg-info
-<<<<<<< HEAD
-lookup_table.pkl
 .idea
-results/
-=======
-results/
-data/
-experiments/
-config/
->>>>>>> repo-b/master
