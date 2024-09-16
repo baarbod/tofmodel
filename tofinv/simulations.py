@@ -8,6 +8,7 @@ from functools import partial
 from tof import posfunclib as pfl
 from tof import tofmodel as tm
 
+
 # function for defining the position-time function
 def define_x_func(main_frequencies=None, an_vals=None, phase=None):
     an = np.array(an_vals)
@@ -46,15 +47,17 @@ def simulate_parameter_set(idx, input_data):
     X = np.ndarray(Xshape, dtype=Xtype, buffer=Xshm.buf)
     Y = np.ndarray(Yshape, dtype=Ytype, buffer=Yshm.buf)
     
-    # define velocity and add initial zero-flow baseline period 
-    tdummy = tr * np.linspace(0, npulse, Yshape[2])
-    vdummy = utils.define_velocity_fourier(tdummy, velocity_input, frequencies, rand_phase, v_offset)
+    # define velocity
+    t = tr * np.linspace(0, npulse, Yshape[2])
+    v = utils.define_velocity_fourier(t, velocity_input, frequencies, rand_phase, v_offset)
+    
+    # add initial zero-flow baseline period 
     baseline_duration = tr*npulse_offset
-    tdummy_with_baseline, vdummy_with_baseline = utils.add_baseline_period(tdummy, vdummy, baseline_duration)
+    t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, baseline_duration)
     
     # define position function
-    x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=tdummy_with_baseline, 
-                          vts=vdummy_with_baseline, xarea=xarea_sample, area=area_sample)
+    x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
+                          vts=v_with_baseline, xarea=xarea_sample, area=area_sample)
     
     # solve the tof forward model including the extra offset pulses
     scan_param['num_pulse'] = npulse + npulse_offset
@@ -67,18 +70,10 @@ def simulate_parameter_set(idx, input_data):
     s = proc.scale_epi(s_raw)
     s -= np.mean(s, axis=0)
     
-    # Add zero-mean gaussian noise
-    mean = 0
-    noise = np.random.normal(mean, gauss_noise_std, (Xshape[2], 3))
-    s += noise
-    
-    # define ground truth velocity, same length as inflow signal
-    tdummy = tr * np.arange(0, s.shape[0])
-    velocity = np.zeros(np.size(tdummy))
-    velocity += v_offset
-    for amp, phase, w in zip(velocity_input, rand_phase, frequencies):
-        vsine = amp*np.cos(2*np.pi*w*(tdummy - phase))
-        velocity += vsine
+    # # Add zero-mean gaussian noise
+    # mean = 0
+    # noise = np.random.normal(mean, gauss_noise_std, (Xshape[2], 3))
+    # s += noise
 
     # fill matricies
     X[idx, 0, :] = s[:, 0].squeeze()
@@ -87,7 +82,7 @@ def simulate_parameter_set(idx, input_data):
     X[idx, 3, :] = xarea_sample
     X[idx, 4, :] = area_sample
     
-    Y[idx, 0, :] = velocity
+    Y[idx, 0, :] = v
     
 
     
