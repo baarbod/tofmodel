@@ -3,7 +3,7 @@
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-from forward.fresignal import fre_signal_array as fre_signal
+from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
 def simulate_inflow(scan_param, x_func, showplot=False, progress=False):
