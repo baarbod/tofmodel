@@ -6,29 +6,31 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def simulate_inflow(scan_param, x_func, showplot=False, progress=False):
-    """Routine for simulating inflow signals
+def simulate_inflow(scan_param, x_func, showplot=False, progress=False, multithread=True):
+    """ Routine for simulating inflow signals
 
     Parameters
     ----------
     scan_param : dict
-        Scanning parameters
+        scanning parameters
         
     x_func : func
-        Position (cm) as a function of time (s) and initial position (cm)
+        position (cm) as a function of time (s) and initial position (cm)
         
     showplot : bool, optional
-        Show plots related to spin position initialization, by default False
+        show plots related to spin position initialization, by default False
         
     progress : bool, optional
-        Print information about simulation progress, by default False
+        print information about simulation progress, by default False
+
+    multithread : bool, optional
+        use mutliple CPU cores, by default True
 
     Returns
     -------
     signal : numpy.ndarray
-        Matrix of signal timeseries (a.u.) for each slice
+        matrix of signal timeseries (a.u.) for each slice
     """
-    
     
     # define scan parameters
     w = scan_param['slice_width']
@@ -61,58 +63,28 @@ def simulate_inflow(scan_param, x_func, showplot=False, progress=False):
 
     # initialize
     signal = np.zeros([npulse, nslice])
-    s_counter = np.zeros([npulse, nslice])
 
-    # controls how often to display progress message
-    fraction = nproton / 10
+    params = [(npulse, nslice, x0_array, x_func, timings, 
+              multi_factor, w, fa, tr, t1, pulse_slice, pulse_tr_actual)] * nproton
     
-    # main loop which computes proton signal contributions
-    for iproton in range(nproton):
-
-        # display progress message
-        if progress:
-            if (iproton % fraction) == 0:
-                tnow = time.time()-t
-                tstr = '{:3.2f}'.format(tnow)
-                string = str(iproton) + ' protons at ' + tstr + ' seconds'
-                print(string)
-
-        # get the initial position
-        init_pos = x0_array[iproton]
-
-        # compute position at each rf pulse
-        proton_position_no_repeats = x_func(np.unique(timings), init_pos)
-        proton_position = np.repeat(proton_position_no_repeats, multi_factor)
-
-        # convert absolute positions to slice location
-        proton_slice = np.floor(proton_position / w)
-
-        # find pulses that this proton received
-        match_cond = pulse_slice == proton_slice
-        pulse_recieve_ind = np.where(match_cond)[0]
-
-        # loop through recieved pulses and compute flow signal
-        tprev = float('nan')
-
-        # loop through each pulse and compute signal
-        dt_list = np.zeros(np.size(pulse_recieve_ind))
-        s_for_proton = []
-        for count, pulse_id in enumerate(pulse_recieve_ind):
-            tnow = timings[pulse_id]
-            dt = tnow - tprev  # correct dt behavior on 1st pulse
-            tprev = tnow
-            dt_list[count] = dt
-            npulse = count + 1  # correcting for zero-based numbering
-
-            s = fre_signal(npulse, fa, tr, t1, dt_list)
-
-            current_tr = pulse_tr_actual[pulse_id]
-            current_slice = proton_slice[pulse_id]
-            current_slice = current_slice.astype(int)
-            signal[current_tr, current_slice] += s
-            s_counter[current_tr, current_slice] += 1
-            s_for_proton.append(s)
-
+    if multithread:
+        from multiprocessing import Pool
+        import os
+        
+        num_usable_cpu = len(os.sched_getaffinity(0))
+        protons_per_core = nproton / num_usable_cpu
+        num_turnover = 4
+        optimal_chunksize = int(protons_per_core / num_turnover)
+        
+        with Pool() as pool:
+            result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
+        
+        for s in result:
+            signal += s
+    else:
+        for iproton in nproton:
+            signal += compute_proton_signal_contribution(iproton, params)
+        
     elapsed = time.time() - t
 
     elapsed = '{:3.2f}'.format(elapsed)
@@ -123,6 +95,48 @@ def simulate_inflow(scan_param, x_func, showplot=False, progress=False):
     # Divide after summing contributions; signal is the average of protons
     signal = signal / nproton_per_slice
     return signal
+
+
+def compute_proton_signal_contribution(iproton, params):
+    
+    npulse, nslice, x0_array, x_func, timings, \
+    multi_factor, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
+    
+    s_proton_contribution = np.zeros([npulse, nslice])
+    
+    # get the initial position
+    init_pos = x0_array[iproton]
+
+    # compute position at each rf pulse
+    proton_position_no_repeats = x_func(np.unique(timings), init_pos)
+    proton_position = np.repeat(proton_position_no_repeats, multi_factor)
+
+    # convert absolute positions to slice location
+    proton_slice = np.floor(proton_position / w)
+
+    # find pulses that this proton received
+    match_cond = pulse_slice == proton_slice
+    pulse_recieve_ind = np.where(match_cond)[0]
+
+    # loop through recieved pulses and compute flow signal
+    tprev = float('nan')
+
+    # loop through each pulse and compute signal
+    dt_list = np.zeros(np.size(pulse_recieve_ind))
+    for count, pulse_id in enumerate(pulse_recieve_ind):
+        tnow = timings[pulse_id]
+        dt = tnow - tprev  # correct dt behavior on 1st pulse
+        tprev = tnow
+        dt_list[count] = dt
+        npulse = count + 1  # correcting for zero-based numbering
+
+        s = fre_signal(npulse, fa, tr, t1, dt_list)
+
+        current_tr = pulse_tr_actual[pulse_id]
+        current_slice = proton_slice[pulse_id]
+        current_slice = current_slice.astype(int)
+        s_proton_contribution[current_tr, current_slice] += s 
+    return s_proton_contribution
 
 
 def get_pulse_targets(tr, nslice, npulse, alpha):
