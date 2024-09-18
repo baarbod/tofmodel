@@ -3,7 +3,7 @@
 import os
 import pickle
 import numpy as np
-import tofinv.utils as utils
+import tofmodel.inverse.utils as utils
 import shutil
 
 from config.path import ROOT_DIR
