@@ -1,6 +1,6 @@
 #!/bin/bash                      
 #SBATCH -t 1:00:00         
-#SBATCH -n 32                
+#SBATCH -n 1                
 #SBATCH --mem=64G                      
 #SBATCH --job-name=combine
 #SBATCH --output=output_%A_%a.txt  
