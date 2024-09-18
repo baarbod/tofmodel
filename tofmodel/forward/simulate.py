@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def simulate_inflow(scan_param, x_func, showplot=False, progress=False, multithread=True):
+def simulate_inflow(scan_param, x_func, progress=False, multithread=True):
     """ Routine for simulating inflow signals
 
     Parameters
@@ -16,9 +16,6 @@ def simulate_inflow(scan_param, x_func, showplot=False, progress=False, multithr
         
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
-        
-    showplot : bool, optional
-        show plots related to spin position initialization, by default False
         
     progress : bool, optional
         print information about simulation progress, by default False
@@ -46,7 +43,7 @@ def simulate_inflow(scan_param, x_func, showplot=False, progress=False, multithr
 
     # set the proton initial positions
     dx = 0.01
-    x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, showplot=showplot, progress=progress)
+    x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=progress)
     nproton = np.size(x0_array)
     nproton_per_slice = int(w / dx)
 
@@ -169,16 +166,12 @@ def match_pulse_to_tr(npulse, nslice):
     return pulse_tr_actual
 
 
-def set_init_positions(x_func, tr, w, npulse, nslice, dx,
-                       showplot=True, progress=False):
+def set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=False):
     # initialize protons for simulation
     dummyt = np.arange(0, tr*npulse, tr/10)
     print('=================================================================')
     if progress:
         print('Finding initial proton positions...')
-
-    if showplot:
-        fig, ax = plt.subplots(nrows=1, ncols=1)
 
     # define range of potential positions
     x0test_range = np.arange(-1500, 1500, 1)
@@ -216,20 +209,6 @@ def set_init_positions(x_func, tr, w, npulse, nslice, dx,
         xupper = x0test_range[max(protons_to_include) + 5]
     except:
         xupper = x0test_range[-1]
-
-    if showplot:
-        ax.plot(x0test_range, x0test_range, label='x0')
-        ax.plot(x0test_range, arrmin, label='xmin')
-        ax.plot(x0test_range, arrmax, label='xmax')
-        for i in protons_to_include:
-            ax.axvline(x0test_range[i], linestyle=':', color='black')
-        ax.axhline(0, linestyle='--', color='gray')
-        ax.axhline(w * nslice, linestyle='--', color='gray')
-        ax.legend()
-
-        ax.set_xlim(xlower, xupper)
-        ax.set_ylim(xlower, xupper)
-        plt.show()
 
     if xupper < xlower:
         print('WARNING: xupper is less than xlower. Check proton initialization')
