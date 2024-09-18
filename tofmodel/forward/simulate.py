@@ -79,8 +79,8 @@ def simulate_inflow(scan_param, x_func, progress=False, multithread=True):
         for s in result:
             signal += s
     else:
-        for iproton in nproton:
-            signal += compute_proton_signal_contribution(iproton, params)
+        for iproton in range(nproton):
+            signal += compute_proton_signal_contribution(iproton, params[0])
         
     elapsed = time.time() - t
 
