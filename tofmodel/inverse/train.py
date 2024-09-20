@@ -11,15 +11,15 @@ import pickle
 import json
 import argparse
 import time 
-from tofinv.models import TOFinverse
-import tofinv.utils as utils
-from config.path import ROOT_DIR
+from tofmodel.inverse.models import TOFinverse
+import tofmodel.inverse.utils as utils
+from tofmodel.path import ROOT_DIR
 
 
 parser = argparse.ArgumentParser(description='Script for training neural network on simulated dataset')
 parser.add_argument('--datafolder', help='name of folder containing simulated dataset and config file')
 parser.add_argument('--epochs', default=10, type=int, help='number of total epochs to run (default: 10)')
-parser.add_argument('--batch', default=64, type=int, help='batch size (default: 64)')
+parser.add_argument('--batch', default=16, type=int, help='batch size (default: 16)')
 parser.add_argument('--lr', default=0.001, type=float, help='initial learning rate (default: 0.1)')
 args = parser.parse_args()
 
