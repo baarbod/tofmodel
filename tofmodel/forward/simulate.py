@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def simulate_inflow(scan_param, x_func, progress=False, multithread=True):
+def simulate_inflow(scan_param, x_func, x0_array_given=None, progress=False, multithread=True):
     """ Routine for simulating inflow signals
 
     Parameters
@@ -16,6 +16,9 @@ def simulate_inflow(scan_param, x_func, progress=False, multithread=True):
         
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
+    
+    x0_array_given : numpy.ndarray
+        array of proton inital positions (cm) directly supplied instead of computing in routine, by default None
         
     progress : bool, optional
         print information about simulation progress, by default False
@@ -43,7 +46,11 @@ def simulate_inflow(scan_param, x_func, progress=False, multithread=True):
 
     # set the proton initial positions
     dx = 0.01
-    x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=progress)
+    if x0_array_given is None:
+        x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=progress)
+    elif type(x0_array_given) == np.ndarray:
+        x0_array = np.array(x0_array_given)
+        
     nproton = np.size(x0_array)
     nproton_per_slice = int(w / dx)
 
@@ -73,12 +80,15 @@ def simulate_inflow(scan_param, x_func, progress=False, multithread=True):
         num_turnover = 4
         optimal_chunksize = int(protons_per_core / num_turnover)
         
+        print(f"using {num_usable_cpu} cpu cores")
+        
         with Pool() as pool:
             result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
         
         for s in result:
             signal += s
     else:
+        print(f"using 1 cpu core")
         for iproton in range(nproton):
             signal += compute_proton_signal_contribution(iproton, params[0])
         
