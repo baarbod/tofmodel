@@ -4,3 +4,7 @@ __pycache__
 *egg-info
 .idea
 config/
+test/
+experiments/
+data/
+scripts/logs
