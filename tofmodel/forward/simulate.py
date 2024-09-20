@@ -6,13 +6,34 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def simulate_inflow(scan_param, x_func, x0_array_given=None, progress=False, multithread=True):
+def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, x0_array_given=None, progress=False, multithread=True):
     """ Routine for simulating inflow signals
 
     Parameters
     ----------
-    scan_param : dict
-        scanning parameters
+    tr : float
+        RF pulse repetition time (s)
+        
+    npulse : int
+        total number of TR cycles to simulate
+        
+    w : float
+        slice thickness (cm)
+        
+    fa : float
+        flip angle (degrees)
+        
+    t1 : float
+        T1 time constant for flowing fluid (s) 
+        
+    nslice : int
+        number of imaging slices
+        
+    alpha : list
+        slice timing for each slice which should have length same as nslice (s)
+        
+    multi_factor : int
+        multi-band factor
         
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
@@ -32,15 +53,9 @@ def simulate_inflow(scan_param, x_func, x0_array_given=None, progress=False, mul
         matrix of signal timeseries (a.u.) for each slice
     """
     
-    # define scan parameters
-    w = scan_param['slice_width']
-    tr = scan_param['repetition_time']
-    fa = scan_param['flip_angle'] * np.pi / 180
-    t1 = scan_param['t1_time']
-    nslice = scan_param['num_slice']
-    npulse = scan_param['num_pulse']
-    multi_factor = scan_param['MBF']
-    alpha = np.array(scan_param['alpha_list'], ndmin=2).T
+    # process scan parameters
+    fa = fa * np.pi / 180
+    alpha = np.array(alpha, ndmin=2).T
 
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
 
@@ -102,6 +117,90 @@ def simulate_inflow(scan_param, x_func, x0_array_given=None, progress=False, mul
     # Divide after summing contributions; signal is the average of protons
     signal = signal / nproton_per_slice
     return signal
+
+
+def set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=False):
+    """ Defines the protons to be simulated and their initial positions 
+
+    Parameters
+    ----------
+    x_func : func
+        position (cm) as a function of time (s) and initial position (cm)
+        
+    tr : float
+        RF pulse repetition time (s)
+        
+    w : float
+        slice thickness (cm)
+        
+    npulse : int
+        total number of TR cycles to simulate
+        
+    nslice : int
+        number of imaging slices
+        
+    dx : float
+        distance (cm) between adjacent initialized protons
+        
+    progress : bool, optional
+        print information about simulation progress, by default False
+
+    Returns
+    -------
+    x0_array: numpy.ndarray
+        array of initial positions (cm) for each proton
+    """
+    
+    # initialize protons for simulation
+    dummyt = np.arange(0, tr*npulse, tr/10)
+    print('=================================================================')
+    if progress:
+        print('Finding initial proton positions...')
+
+    # define range of potential positions
+    x0test_range = np.arange(-1500, 1500, 1)
+
+    # initialize
+    arrmin = np.zeros(np.size(x0test_range))
+    arrmax = np.zeros(np.size(x0test_range))
+    protons_to_include = []
+
+    # loop through potential initial positions
+    for idx, x0 in enumerate(x0test_range):
+
+        # solve position over time for a given initial position
+        x = x_func(dummyt, x0)
+
+        # compute the resulting min and max position
+        xmin = np.min(x)
+        xmax = np.max(x)
+
+        # store in array
+        arrmin[idx] = xmin
+        arrmax[idx] = xmax
+
+        # check if proton would flow within slices
+        lower_within_bool = 0 < xmin < w * nslice
+        upper_within_bool = 0 < xmax < w * nslice
+        slice_within_bool = xmin < 0 and xmax > w * nslice
+        if lower_within_bool or upper_within_bool or slice_within_bool:
+            # record this proton as a candidate
+            protons_to_include.append(idx)
+
+    # define bounds with some padding
+    xlower = x0test_range[min(protons_to_include) - 5]
+    try:
+        xupper = x0test_range[max(protons_to_include) + 5]
+    except:
+        xupper = x0test_range[-1]
+
+    if xupper < xlower:
+        print('WARNING: xupper is less than xlower. Check proton initialization')
+    if progress:
+        print('setting lower bound to ' + str(xlower) + ' cm')
+        print('setting upper bound to ' + str(xupper) + ' cm')
+    x0_array = np.arange(xlower, xupper, dx)
+    return x0_array
 
 
 def compute_proton_signal_contribution(iproton, params):
@@ -176,54 +275,3 @@ def match_pulse_to_tr(npulse, nslice):
     return pulse_tr_actual
 
 
-def set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=False):
-    # initialize protons for simulation
-    dummyt = np.arange(0, tr*npulse, tr/10)
-    print('=================================================================')
-    if progress:
-        print('Finding initial proton positions...')
-
-    # define range of potential positions
-    x0test_range = np.arange(-1500, 1500, 1)
-
-    # initialize
-    arrmin = np.zeros(np.size(x0test_range))
-    arrmax = np.zeros(np.size(x0test_range))
-    protons_to_include = []
-
-    # loop through potential initial positions
-    for idx, x0 in enumerate(x0test_range):
-
-        # solve position over time for a given initial position
-        x = x_func(dummyt, x0)
-
-        # compute the resulting min and max position
-        xmin = np.min(x)
-        xmax = np.max(x)
-
-        # store in array
-        arrmin[idx] = xmin
-        arrmax[idx] = xmax
-
-        # check if proton would flow within slices
-        lower_within_bool = 0 < xmin < w * nslice
-        upper_within_bool = 0 < xmax < w * nslice
-        slice_within_bool = xmin < 0 and xmax > w * nslice
-        if lower_within_bool or upper_within_bool or slice_within_bool:
-            # record this proton as a candidate
-            protons_to_include.append(idx)
-
-    # define bounds with some padding
-    xlower = x0test_range[min(protons_to_include) - 5]
-    try:
-        xupper = x0test_range[max(protons_to_include) + 5]
-    except:
-        xupper = x0test_range[-1]
-
-    if xupper < xlower:
-        print('WARNING: xupper is less than xlower. Check proton initialization')
-    if progress:
-        print('setting lower bound to ' + str(xlower) + ' cm')
-        print('setting upper bound to ' + str(xupper) + ' cm')
-    x0_array = np.arange(xlower, xupper, dx)
-    return x0_array
