@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, x0_array_given=None, progress=False, multithread=True):
+def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, X_given=None, multithread=False):
     """ Routine for simulating inflow signals
 
     Parameters
@@ -38,11 +38,8 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
     
-    x0_array_given : numpy.ndarray
-        array of proton inital positions (cm) directly supplied instead of computing in routine, by default None
-        
-    progress : bool, optional
-        print information about simulation progress, by default False
+    X_given : numpy.ndarray
+        array of proton positions (cm) directly supplied instead of computing in routine, by default None
 
     multithread : bool, optional
         use mutliple CPU cores, by default True
@@ -58,34 +55,43 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     alpha = np.array(alpha, ndmin=2).T
 
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
-
-    # set the proton initial positions
-    dx = 0.01
-    if x0_array_given is None:
-        x0_array = set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=progress)
-    elif type(x0_array_given) == np.ndarray:
-        x0_array = np.array(x0_array_given)
-        
-    nproton = np.size(x0_array)
-    nproton_per_slice = int(w / dx)
-
-    print('running simulation with ' + str(nproton) + ' protons...')
-
+    
     # find the time and target slice of each RF pulse
     timings, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
+
+    # define proton positions over time
+    dx = 0.01
+    if X_given is None:
+        tstart_pos = time.time()
+        X = compute_positions_over_time(x_func, np.unique(timings), w, nslice, dx)
+        elapsed = time.time() - tstart_pos
+        elapsed = '{:3.2f}'.format(elapsed)
+        print('position calculation time: ' + str(elapsed) + ' seconds')
+    elif type(X_given) == np.ndarray:
+        X = np.array(X_given)
+        print('Using given proton positions. Skipping calculation...')
+    print('=================================================================')
+    print(' ')
+
+    # repeated X array because positions are equal with simoultaneous RF pulses                    
+    Xrepeated = np.repeat(X, multi_factor, axis=1)
+    nproton = X.shape[0]
+    nproton_per_slice = int(w / dx)
+    print('running simulation with ' + str(nproton) + ' protons...')
 
     # associate each pulse to its RF cycle
     pulse_tr_actual = match_pulse_to_tr(npulse, nslice)
 
     # get the current time before starting the simulation
-    t = time.time()
+    tstart_sim = time.time()
 
     # initialize
     signal = np.zeros([npulse, nslice])
 
-    params = [(npulse, nslice, x0_array, x_func, timings, 
-              multi_factor, w, fa, tr, t1, pulse_slice, pulse_tr_actual)] * nproton
+    # define params tuple the same for each proton
+    params = [(npulse, nslice, Xrepeated, timings, w, fa, tr, t1, pulse_slice, pulse_tr_actual)] * nproton
     
+    # run simulation
     if multithread:
         from multiprocessing import Pool
         import os
@@ -106,8 +112,8 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         print(f"using 1 cpu core")
         for iproton in range(nproton):
             signal += compute_proton_signal_contribution(iproton, params[0])
-        
-    elapsed = time.time() - t
+
+    elapsed = time.time() - tstart_sim
 
     elapsed = '{:3.2f}'.format(elapsed)
     print('total simulation time: ' + str(elapsed) + ' seconds')
@@ -119,106 +125,77 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     return signal
 
 
-def set_init_positions(x_func, tr, w, npulse, nslice, dx, progress=False):
-    """ Defines the protons to be simulated and their initial positions 
+def compute_positions_over_time(x_func, timings, w, nslice, dx):
+    """ Define range of protons to initialize and compute their positions over time
 
     Parameters
     ----------
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
         
-    tr : float
-        RF pulse repetition time (s)
+    timings : numpy.ndarray
+        array of RF pulse timings
         
     w : float
         slice thickness (cm)
-        
-    npulse : int
-        total number of TR cycles to simulate
         
     nslice : int
         number of imaging slices
         
     dx : float
         distance (cm) between adjacent initialized protons
-        
-    progress : bool, optional
-        print information about simulation progress, by default False
-
+    
     Returns
     -------
-    x0_array: numpy.ndarray
-        array of initial positions (cm) for each proton
+    X: numpy.ndarray
+        array of positions (cm) for each proton at each RF pulse timing
     """
     
-    # initialize protons for simulation
-    dummyt = np.arange(0, tr*npulse, tr/10)
-    print('=================================================================')
-    if progress:
-        print('Finding initial proton positions...')
+    def does_x_touch_slices(X):
+        lower_above_slc1 = X.min(axis=1) > 0
+        lower_below_slc_last = X.min(axis=1) < w * nslice
+        upper_above_slc1 = X.max(axis=1) > 0
+        upper_below_slc_last = X.max(axis=1) < w * nslice
+        slice_within_lower = X.min(axis=1) < 0
+        slice_within_upper = X.max(axis=1) > w * nslice
+        condition1 = lower_above_slc1 & lower_below_slc_last
+        condition2 = upper_above_slc1 & upper_below_slc_last
+        condition3 = slice_within_lower & slice_within_upper
+        does_touch = condition1 | condition2 | condition3
+        return does_touch
 
-    # define range of potential positions
-    x0test_range = np.arange(-1500, 1500, 1)
+    upper_bound = w*nslice
+    does_touch = True
+    while does_touch:
+        x = x_func(timings, np.array(upper_bound, ndmin=1))
+        does_touch = does_x_touch_slices(x)
+        dx_downward = x.min() - upper_bound
+        dx_downward /= 10
+        upper_bound += np.abs(dx_downward)
+        
+    lower_bound = 0
+    does_touch = True
+    while does_touch:
+        x = x_func(timings, np.array(lower_bound, ndmin=1))
+        does_touch = does_x_touch_slices(x)
+        dx_upward = x.max() - lower_bound
+        dx_upward /= 10
+        lower_bound -= np.abs(dx_upward)
 
-    # initialize
-    arrmin = np.zeros(np.size(x0test_range))
-    arrmax = np.zeros(np.size(x0test_range))
-    protons_to_include = []
-
-    # loop through potential initial positions
-    for idx, x0 in enumerate(x0test_range):
-
-        # solve position over time for a given initial position
-        x = x_func(dummyt, x0)
-
-        # compute the resulting min and max position
-        xmin = np.min(x)
-        xmax = np.max(x)
-
-        # store in array
-        arrmin[idx] = xmin
-        arrmax[idx] = xmax
-
-        # check if proton would flow within slices
-        lower_within_bool = 0 < xmin < w * nslice
-        upper_within_bool = 0 < xmax < w * nslice
-        slice_within_bool = xmin < 0 and xmax > w * nslice
-        if lower_within_bool or upper_within_bool or slice_within_bool:
-            # record this proton as a candidate
-            protons_to_include.append(idx)
-
-    # define bounds with some padding
-    xlower = x0test_range[min(protons_to_include) - 5]
-    try:
-        xupper = x0test_range[max(protons_to_include) + 5]
-    except:
-        xupper = x0test_range[-1]
-
-    if xupper < xlower:
-        print('WARNING: xupper is less than xlower. Check proton initialization')
-    if progress:
-        print('setting lower bound to ' + str(xlower) + ' cm')
-        print('setting upper bound to ' + str(xupper) + ' cm')
-    x0_array = np.arange(xlower, xupper, dx)
-    return x0_array
+    x0test_range = np.arange(lower_bound, upper_bound, dx)
+    X = x_func(timings, x0test_range)
+    
+    return X
 
 
 def compute_proton_signal_contribution(iproton, params):
     
-    npulse, nslice, x0_array, x_func, timings, \
-    multi_factor, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
+    npulse, nslice, Xrepeated, timings, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
     
     s_proton_contribution = np.zeros([npulse, nslice])
-    
-    # get the initial position
-    init_pos = x0_array[iproton]
-
-    # compute position at each rf pulse
-    proton_position_no_repeats = x_func(np.unique(timings), init_pos)
-    proton_position = np.repeat(proton_position_no_repeats, multi_factor)
 
     # convert absolute positions to slice location
-    proton_slice = np.floor(proton_position / w)
+    proton_slice = np.floor(Xrepeated[iproton, :] / w)
 
     # find pulses that this proton received
     match_cond = pulse_slice == proton_slice
