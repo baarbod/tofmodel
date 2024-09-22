@@ -121,7 +121,7 @@ def prepare_simulation_inputs():
     
     inputs = [{'input_data': input_data[i], 'x0_array': x0_array_list[i]} for i in range(len(input_data))]
     
-    inputs_path = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_task{task_id}.pkl")
+    inputs_path = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_task{task_id:02}.pkl")
     with open(inputs_path, "wb") as f:
         pickle.dump(inputs, f)
     
@@ -334,7 +334,7 @@ def run_simulation():
     inputs_path = os.path.join(dataset_sorted_dir, file)
     with open(inputs_path, 'rb') as f:
         input_data = pickle.load(f)
-    input_data_batch = input_data[task_id*batch_size:(task_id+1)*batch_size]
+    input_data_batch = input_data[(task_id-1)*batch_size:(task_id)*batch_size]
     
     for i in range(len(input_data_batch)):
         input_data_batch[i]['input_data'][9] = task_id
@@ -363,16 +363,13 @@ def run_simulation():
     print(f"total simulation time = {tstr}")
     print(f"total number of samples = {x.shape[0]}")
 
-    # create folder associated with this simulation
-    os.makedirs(dataset_simulated_batched_dir, exist_ok=True)
-
     # log simulation experiment information
     config_path = os.path.join(dataset_simulated_batched_dir, 'config_used.json')
     with open(config_path, 'w') as fp:
         json.dump(param, fp, indent=4)
 
     # save training data simulation information
-    output_path = os.path.join(dataset_simulated_batched_dir, f"output_{Xshape[0]}_samples_task{task_id}" '.pkl')
+    output_path = os.path.join(dataset_simulated_batched_dir, f"output_{Xshape[0]}_samples_task{task_id:02}" '.pkl')
     print('Saving updated training_data set...')   
     with open(output_path, "wb") as f:
         pickle.dump([x, y], f)
@@ -384,10 +381,8 @@ def run_simulation():
 
 
 def combine_simulated_batches():
-    
-    folder = os.path.join(dataset_root, dataset_name)
-    os.makedirs(folder, exist_ok=True)
 
+    folder = os.path.join(dataset_root, dataset_name)
     x_list = []
     y_list = []
     config_flag = 0
