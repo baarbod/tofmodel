@@ -19,10 +19,12 @@ def compute_position_sine(t, x0, v1, v2, w0):
     offset = v1 + amplitude
     return offset*t + amplitude / w0 * np.sin(w0 * t) + x0
 
+
 def compute_position_sine_phase(t, x0, v1, v2, w0, phase):
     amplitude = (v2 - v1) / 2
     offset = v1 + amplitude
     return offset*t + amplitude / w0 * np.sin(w0 * (t-phase)) + x0 - 0*amplitude / w0 * np.sin(-w0*phase)
+
 
 def compute_position_sine_spatial(t_eval, x0, v1, v2, w0, xarea, area):
     def func(t, x, v1, v2, w0, xarea, area):
@@ -68,6 +70,7 @@ def compute_position_fourier(t, x0, an, bn, w0):
     term = term.squeeze()
     return offset * t / 2 + term + k
 
+
 def compute_position_fourier_phase(t, x0, an, bn, w0, phase):
     offset = np.array(an[0])
     an = np.array(an[1:])
@@ -87,6 +90,7 @@ def compute_position_fourier_phase(t, x0, an, bn, w0, phase):
         term = np.sum(tt, axis=0)
     term = term.squeeze()
     return offset * t / 2 + term + k
+
 
 def compute_position_fourier_spatial(t_eval, x0, an, bn, w0, xarea, area):
     def func(t, x, an, bn, w0, xarea, area):
@@ -157,27 +161,28 @@ def compute_position_numeric(t_eval, x0, tr_vect, xcs):
 
 
 def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
-    def func(t, x, vts, xarea, area):
-        # ind0 = xarea == 0
-        ind0 = np.abs(xarea).argmin() # find where xarea is zero
-        area0 = area[ind0]
-        diffarray = np.absolute(xarea - x)
-        ind = diffarray.argmin()
-        a = area[ind]
-        if a < 0.05:
-            a = 0.05
+    
+    ind0 = np.abs(xarea).argmin() # find where xarea is zero
+    area0 = area[ind0]
+    area_clipped = np.clip(area, 0.05, None)
 
+    def func(t, x, vts, xarea, area_clipped):
+
+        diffarray = np.abs(xarea - x[:, np.newaxis])
+        ind = diffarray.argmin(axis=1)
+        a = area_clipped[ind]
         pos_term = area0 / a
-
+        
         diffarray = np.absolute(tr_vect - t)
         ind = diffarray.argmin()
         time_term = vts[ind]
-
+        
         state = pos_term * time_term
         return state
 
-    p = (vts, xarea, area)
+
+    p = (vts, xarea, area_clipped)
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, [x0], args=p, t_eval=t_eval)
-    return sol.y[0]
+    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, vectorize=True)
+    return sol.y
