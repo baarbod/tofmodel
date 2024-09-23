@@ -76,7 +76,6 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     # repeated X array because positions are equal with simoultaneous RF pulses                    
     Xrepeated = np.repeat(X, multi_factor, axis=1)
     nproton = X.shape[0]
-    nproton_per_slice = int(w / dx)
     print('running simulation with ' + str(nproton) + ' protons...')
 
     # associate each pulse to its RF cycle
@@ -120,8 +119,20 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     print('=================================================================')
     print(' ')
 
+    # compute the number of spins in each slice over each tr
+    num_proton_in_slice = np.zeros((npulse, nslice), dtype=int)
+    pos_at_end_of_tr_cycles = X[:, 0::int(nslice/multi_factor)]
+    proton_slice = np.floor(pos_at_end_of_tr_cycles / w)
+    for ipulse in range(npulse):
+        all_proton_slice_id = proton_slice[:, ipulse]
+        for islice in range(nslice):
+            p = np.array(all_proton_slice_id, dtype=int)
+            p[all_proton_slice_id != islice] = 0
+            p[all_proton_slice_id == islice] = 1
+            num_proton_in_slice[ipulse, islice] = np.nonzero(p)[0].size
+        
     # Divide after summing contributions; signal is the average of protons
-    signal = signal / nproton_per_slice
+    signal = signal / num_proton_in_slice
     return signal
 
 
