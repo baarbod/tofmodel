@@ -166,22 +166,27 @@ def compute_positions_over_time(x_func, timings, w, nslice, dx):
 
     upper_bound = w*nslice
     does_touch = True
+    x = x_func(timings, np.array(upper_bound, ndmin=1))
     while does_touch:
-        x = x_func(timings, np.array(upper_bound, ndmin=1))
-        does_touch = does_x_touch_slices(x)
         dx_downward = x.min() - upper_bound
         dx_downward /= 10
         upper_bound += np.abs(dx_downward)
+        does_touch = does_x_touch_slices(x)
+        x = x_func(timings, np.array(upper_bound, ndmin=1))
         
     lower_bound = 0
     does_touch = True
+    x = x_func(timings, np.array(lower_bound, ndmin=1))
     while does_touch:
-        x = x_func(timings, np.array(lower_bound, ndmin=1))
-        does_touch = does_x_touch_slices(x)
         dx_upward = x.max() - lower_bound
         dx_upward /= 10
         lower_bound -= np.abs(dx_upward)
+        x = x_func(timings, np.array(lower_bound, ndmin=1))
+        does_touch = does_x_touch_slices(x)
 
+    upper_bound += 2
+    lower_bound -= 2
+    
     x0test_range = np.arange(lower_bound, upper_bound, dx)
     X = x_func(timings, x0test_range)
     
