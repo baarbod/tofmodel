@@ -10,6 +10,8 @@ def model(Xfunc, t):
 
 
 def compute_position_constant(t, x0, v0):
+    x0 = x0[:, np.newaxis]  # Now x0 has shape (n, 1)
+    t = t[np.newaxis, :]    # Now t has shape (1, m)
     X = v0 * t + x0
     return X
 
