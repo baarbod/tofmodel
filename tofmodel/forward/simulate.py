@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, X_given=None, multithread=False):
+def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, dx=0.01, X_given=None, multithread=False):
     """ Routine for simulating inflow signals
 
     Parameters
@@ -34,6 +34,9 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         
     multi_factor : int
         multi-band factor
+    
+    dx : float
+        distance between initalized protons (cm), by default 0.01
         
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
@@ -60,10 +63,11 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     timings, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
 
     # define proton positions over time
-    dx = 0.01
     if X_given is None:
         tstart_pos = time.time()
-        X = compute_positions_over_time(x_func, np.unique(timings), w, nslice, dx)
+        lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings), w, nslice)
+        x0 = np.arange(lower_bound, upper_bound + dx, dx)
+        X = x_func(np.unique(timings), x0)
         elapsed = time.time() - tstart_pos
         elapsed = '{:3.2f}'.format(elapsed)
         print('position calculation time: ' + str(elapsed) + ' seconds')
@@ -136,8 +140,8 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     return signal
 
 
-def compute_positions_over_time(x_func, timings, w, nslice, dx):
-    """ Define range of protons to initialize and compute their positions over time
+def get_init_position_bounds(x_func, timings, w, nslice):
+    """ Optimally define bounds of proton initial positions 
 
     Parameters
     ----------
@@ -152,20 +156,17 @@ def compute_positions_over_time(x_func, timings, w, nslice, dx):
         
     nslice : int
         number of imaging slices
-        
-    dx : float
-        distance (cm) between adjacent initialized protons
-    
+
     Returns
     -------
-    X: numpy.ndarray
-        array of positions (cm) for each proton at each RF pulse timing
+    lower_bound, upper_bound: float
+        values for the lowest and highest initial proton positions 
     """
     
     def does_x_touch_slices(X):
-        lower_above_slc1 = X.min(axis=1) > 0
+        lower_above_slc1 = X.min(axis=1) >= 0
         lower_below_slc_last = X.min(axis=1) < w * nslice
-        upper_above_slc1 = X.max(axis=1) > 0
+        upper_above_slc1 = X.max(axis=1) >= 0
         upper_below_slc_last = X.max(axis=1) < w * nslice
         slice_within_lower = X.min(axis=1) < 0
         slice_within_upper = X.max(axis=1) > w * nslice
@@ -175,33 +176,28 @@ def compute_positions_over_time(x_func, timings, w, nslice, dx):
         does_touch = condition1 | condition2 | condition3
         return does_touch
 
-    upper_bound = w*nslice
-    does_touch = True
-    x = x_func(timings, np.array(upper_bound, ndmin=1))
-    while does_touch:
-        dx_downward = x.min() - upper_bound
-        dx_downward /= 10
-        upper_bound += np.abs(dx_downward)
-        does_touch = does_x_touch_slices(x)
-        x = x_func(timings, np.array(upper_bound, ndmin=1))
-        
-    lower_bound = 0
-    does_touch = True
-    x = x_func(timings, np.array(lower_bound, ndmin=1))
-    while does_touch:
-        dx_upward = x.max() - lower_bound
-        dx_upward /= 10
-        lower_bound -= np.abs(dx_upward)
-        x = x_func(timings, np.array(lower_bound, ndmin=1))
-        does_touch = does_x_touch_slices(x)
 
-    upper_bound += 2
-    lower_bound -= 2
+    upper_bound = w*nslice
+    x = x_func(timings, np.array(upper_bound, ndmin=1))
+    while does_x_touch_slices(x):
+        dx_downward = x.min() - upper_bound
+        upper_bound += np.abs(dx_downward) / 10
+        x = x_func(timings, np.array(upper_bound, ndmin=1))
+
+    lower_bound = 0
+    x = x_func(timings, np.array(lower_bound, ndmin=1))
+    while does_x_touch_slices(x):
+        dx_upward = x.max() - lower_bound
+        lower_bound -= np.abs(dx_upward) / 10
+        x = x_func(timings, np.array(lower_bound, ndmin=1))
+
+    upper_bound += 1
+    lower_bound -= 1
     
-    x0test_range = np.arange(lower_bound, upper_bound, dx)
-    X = x_func(timings, x0test_range)
+    print(f"upper bound: {upper_bound} cm")
+    print(f"lower bound: {lower_bound} cm")
     
-    return X
+    return lower_bound, upper_bound
 
 
 def compute_proton_signal_contribution(iproton, params):
