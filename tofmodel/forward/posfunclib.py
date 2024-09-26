@@ -163,10 +163,37 @@ def compute_position_numeric(t_eval, x0, tr_vect, xcs):
 
 
 def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
+    """ Perform numerical integration of v(x, t) to obtain positions at each time point
+    
+    Parameters
+    ----------
+    t_eval : numpy.ndarray
+        time points (s) to evaluate position (cm)
+        
+    x0 : numpy.ndarray
+        initial positions (cm)
+        
+    tr_vect : numpy.ndarray_
+        time points (s) associated with numerical input velocity (cm/s)
+        
+    vts : numpy.ndarray
+        velocity timeseries (cm/s)
+        
+    xarea : numpy.ndarray
+        position vector (cm) associated with cross-sectional areas (cm^2)
+        
+    area : numpy.ndarray
+        cross-sectional areas (cm)
+
+    Returns
+    -------
+    sol.y : numpy.ndarray
+        positions (cm) at each time point
+    """
     
     ind0 = np.abs(xarea).argmin() # find where xarea is zero
     area0 = area[ind0]
-    area_clipped = np.clip(area, 0.05, None)
+    area_clipped = np.clip(area, 0.1, None)
 
     def func(t, x, vts, xarea, area_clipped):
 
@@ -186,5 +213,5 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     p = (vts, xarea, area_clipped)
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, vectorize=True)
+    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='DOP853')
     return sol.y
