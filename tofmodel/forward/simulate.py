@@ -4,6 +4,8 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
+from multiprocessing import Pool
+import os
 
 
 def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, dx=0.01, X_given=None, multithread=False):
@@ -60,52 +62,60 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
     
     # find the time and target slice of each RF pulse
-    timings, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
+    timings_with_repeats, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
 
     # define proton positions over time
     if X_given is None:
         tstart_pos = time.time()
-        lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings), w, nslice)
-        x0 = np.arange(lower_bound, upper_bound + dx, dx)
-        X = x_func(np.unique(timings), x0)
-        elapsed = time.time() - tstart_pos
-        elapsed = '{:3.2f}'.format(elapsed)
-        print('position calculation time: ' + str(elapsed) + ' seconds')
-    elif type(X_given) == np.ndarray:
+        lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings_with_repeats), w, nslice)
+        x0 = np.arange(lower_bound, upper_bound, dx)
+        X = x_func(np.unique(timings_with_repeats), x0)
+        print(f'Position calculation time: {time.time() - tstart_pos:.2f} seconds')
+    else:
         X = np.array(X_given)
         print('Using given proton positions. Skipping calculation...')
     print('=================================================================')
     print(' ')
-
-    # repeated X array because positions are equal with simoultaneous RF pulses                    
-    Xrepeated = np.repeat(X, multi_factor, axis=1)
+    
+    # increase density until no proton count is below the minimum allowance
+    min_proton_count = 3
+    num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
+    ind_sparse = np.where(num_proton_in_slice < min_proton_count)
+    if ind_sparse[0].size > 0:
+        print(f"initial proton count is {X.shape[0]}")
+        print(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons")
+        print(f"running density increase algorithm...")
+        count = 0
+        while ind_sparse[0].size > 0:
+            count += 1
+            X = increase_position_matrix_density(X, dx)  
+            num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
+            ind_sparse = np.where(num_proton_in_slice <= min_proton_count)
+        print(f"finished after {count} iterations")
+        print(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
+        print(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+        
     nproton = X.shape[0]
     print('running simulation with ' + str(nproton) + ' protons...')
 
-    # associate each pulse to its RF cycle
+    # match pulses to their RF cycles
     pulse_tr_actual = match_pulse_to_tr(npulse, nslice)
 
-    # get the current time before starting the simulation
     tstart_sim = time.time()
 
-    # initialize
+    # initialize signal array
     signal = np.zeros([npulse, nslice])
 
-    # define params tuple the same for each proton
-    params = [(npulse, nslice, Xrepeated, timings, w, fa, tr, t1, pulse_slice, pulse_tr_actual)] * nproton
+    # setup parameters for each proton
+    params = [(npulse, nslice, X[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual)
+                for iproton in range(nproton)]
     
     # run simulation
     if multithread:
-        from multiprocessing import Pool
-        import os
-        
         num_usable_cpu = len(os.sched_getaffinity(0))
-        protons_per_core = nproton / num_usable_cpu
-        num_turnover = 4
-        optimal_chunksize = int(protons_per_core / num_turnover)
+        optimal_chunksize = int(nproton / (num_usable_cpu * 4))
         
         print(f"using {num_usable_cpu} cpu cores")
-        
         with Pool() as pool:
             result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
         
@@ -114,15 +124,18 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     else:
         print(f"using 1 cpu core")
         for iproton in range(nproton):
-            signal += compute_proton_signal_contribution(iproton, params[0])
+            signal += compute_proton_signal_contribution(iproton, params[iproton])
+                
+    print(f'total simulation time: {time.time() - tstart_sim:.2f} seconds')
 
-    elapsed = time.time() - tstart_sim
+    num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
+    signal /= num_proton_in_slice
+    assert not np.isnan(signal).any(), 'Warning: NaN values found in signal array'
+    
+    return signal
 
-    elapsed = '{:3.2f}'.format(elapsed)
-    print('total simulation time: ' + str(elapsed) + ' seconds')
-    print('=================================================================')
-    print(' ')
 
+def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
     # compute the number of spins in each slice over each tr
     num_proton_in_slice = np.zeros((npulse, nslice), dtype=int)
     pos_at_end_of_tr_cycles = X[:, 0::int(nslice/multi_factor)]
@@ -130,14 +143,26 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     for ipulse in range(npulse):
         all_proton_slice_id = proton_slice[:, ipulse]
         for islice in range(nslice):
-            p = np.array(all_proton_slice_id, dtype=int)
-            p[all_proton_slice_id != islice] = 0
-            p[all_proton_slice_id == islice] = 1
-            num_proton_in_slice[ipulse, islice] = np.nonzero(p)[0].size
+            num_proton_in_slice[ipulse, islice] = np.count_nonzero(all_proton_slice_id == islice)
+    return num_proton_in_slice
+
+
+def increase_position_matrix_density(X, thres):
+    
+    max_dx_for_pair = np.diff(X, axis=0).max(axis=1)
+    ind_gap_above_thres = np.where(max_dx_for_pair > thres)[0]
+    
+    npulse = X.shape[1]
+    X_new_curves = np.zeros((ind_gap_above_thres.size, npulse))
+    
+    for count, idx in enumerate(ind_gap_above_thres):
+        X_new_curves[count] = X[idx:idx+2, :].T.mean(axis=1)
         
-    # Divide after summing contributions; signal is the average of protons
-    signal = signal / num_proton_in_slice
-    return signal
+    Xnew = np.concatenate([X, X_new_curves])
+    sorted_indices = np.argsort(Xnew[:, 0])[::-1]
+    Xnew_sorted = Xnew[np.flipud(sorted_indices)]
+        
+    return Xnew_sorted
 
 
 def get_init_position_bounds(x_func, timings, w, nslice):
@@ -149,7 +174,7 @@ def get_init_position_bounds(x_func, timings, w, nslice):
         position (cm) as a function of time (s) and initial position (cm)
         
     timings : numpy.ndarray
-        array of RF pulse timings
+        array of times to evaluate position
         
     w : float
         slice thickness (cm)
@@ -162,38 +187,35 @@ def get_init_position_bounds(x_func, timings, w, nslice):
     lower_bound, upper_bound: float
         values for the lowest and highest initial proton positions 
     """
+
+    def does_x_touch_slices(x):
+        return ((x < w*nslice) & (x > 0)).any()
+
+    max_iter = 200
     
-    def does_x_touch_slices(X):
-        lower_above_slc1 = X.min(axis=1) >= 0
-        lower_below_slc_last = X.min(axis=1) < w * nslice
-        upper_above_slc1 = X.max(axis=1) >= 0
-        upper_below_slc_last = X.max(axis=1) < w * nslice
-        slice_within_lower = X.min(axis=1) < 0
-        slice_within_upper = X.max(axis=1) > w * nslice
-        condition1 = lower_above_slc1 & lower_below_slc_last
-        condition2 = upper_above_slc1 & upper_below_slc_last
-        condition3 = slice_within_lower & slice_within_upper
-        does_touch = condition1 | condition2 | condition3
-        return does_touch
-
-
-    upper_bound = w*nslice
+    upper_bound = w*nslice + 0.01
     x = x_func(timings, np.array(upper_bound, ndmin=1))
+    counter = 0
     while does_x_touch_slices(x):
         dx_downward = x.min() - upper_bound
-        upper_bound += np.abs(dx_downward) / 10
+        upper_bound += np.abs(dx_downward) / 5
         x = x_func(timings, np.array(upper_bound, ndmin=1))
-
-    lower_bound = 0
+        counter += 1
+        assert counter < max_iter, f'Warning: counter={counter} for finding upper bound exceeded limit'
+    
+    lower_bound = 0 - 0.01
     x = x_func(timings, np.array(lower_bound, ndmin=1))
+    counter = 0
     while does_x_touch_slices(x):
         dx_upward = x.max() - lower_bound
-        lower_bound -= np.abs(dx_upward) / 10
+        lower_bound -= np.abs(dx_upward) / 5
         x = x_func(timings, np.array(lower_bound, ndmin=1))
-
+        counter += 1
+        assert counter < max_iter, f'Warning: counter={counter} for finding lower bound exceeded limit'
+    
+    # place buffers on bounds just to be sure
     upper_bound += 1
     lower_bound -= 1
-    
     print(f"upper bound: {upper_bound} cm")
     print(f"lower bound: {lower_bound} cm")
     
@@ -202,35 +224,23 @@ def get_init_position_bounds(x_func, timings, w, nslice):
 
 def compute_proton_signal_contribution(iproton, params):
     
-    npulse, nslice, Xrepeated, timings, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
-    
+    npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
     s_proton_contribution = np.zeros([npulse, nslice])
 
     # convert absolute positions to slice location
-    proton_slice = np.floor(Xrepeated[iproton, :] / w)
+    proton_slice = np.floor(np.repeat(Xproton, multi_factor) / w)
+    pulse_recieve_ind = np.where(proton_slice == pulse_slice)[0]
 
-    # find pulses that this proton received
-    match_cond = pulse_slice == proton_slice
-    pulse_recieve_ind = np.where(match_cond)[0]
-
-    # loop through recieved pulses and compute flow signal
     tprev = float('nan')
-
-    # loop through each pulse and compute signal
     dt_list = np.zeros(np.size(pulse_recieve_ind))
+    
     for count, pulse_id in enumerate(pulse_recieve_ind):
-        tnow = timings[pulse_id]
-        dt = tnow - tprev  # correct dt behavior on 1st pulse
-        tprev = tnow
-        dt_list[count] = dt
+        dt_list[count] = timings_with_repeats[pulse_id] - tprev
+        tprev = timings_with_repeats[pulse_id]
+
         npulse = count + 1  # correcting for zero-based numbering
-
         s = fre_signal(npulse, fa, tr, t1, dt_list)
-
-        current_tr = pulse_tr_actual[pulse_id]
-        current_slice = proton_slice[pulse_id]
-        current_slice = current_slice.astype(int)
-        s_proton_contribution[current_tr, current_slice] += s 
+        s_proton_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += s
     return s_proton_contribution
 
 
@@ -249,9 +259,9 @@ def get_pulse_targets(tr, nslice, npulse, alpha):
 
     # unpack timing-slice tuple
     pulse_slice_tuple_unpacked = list(zip(*pulse_slice_tuple))
-    timings = np.array(pulse_slice_tuple_unpacked[0])
+    timings_with_repeats = np.array(pulse_slice_tuple_unpacked[0])
     pulse_slice = np.array(pulse_slice_tuple_unpacked[1])
-    return timings, pulse_slice
+    return timings_with_repeats, pulse_slice
 
 
 def match_pulse_to_tr(npulse, nslice):
