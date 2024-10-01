@@ -247,3 +247,24 @@ def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, feat
 
         velocity_NN[ind1:ind2] = y_predicted
     return velocity_NN
+
+
+def mean_pct_portion(x, pct, fromtop=False):
+    # compute the mean top/bottom percent of signal
+
+    x = np.sort(x, axis=0)
+    if fromtop:
+        x = np.flipud(x)
+    num_rows, _ = x.shape
+    n = round(num_rows * pct / 100)
+    return np.mean(x[:n, :], axis=0)
+
+
+def scale_epi(s, startind=0, remove_offset=True):
+    # input csf after loading from file
+    s = s[startind:, :]
+    if remove_offset:
+        s -= mean_pct_portion(s, 5)
+    slice1_maximum = mean_pct_portion(s[:, [0]], 5, fromtop=True)
+    s /= slice1_maximum
+    return s
