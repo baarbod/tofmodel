@@ -17,6 +17,8 @@ def compute_position_constant(t, x0, v0):
 
 
 def compute_position_sine(t, x0, v1, v2, w0):
+    x0 = x0[:, np.newaxis]  # Now x0 has shape (n, 1)
+    t = t[np.newaxis, :]    # Now t has shape (1, m)
     amplitude = (v2 - v1) / 2
     offset = v1 + amplitude
     return offset*t + amplitude / w0 * np.sin(w0 * t) + x0
@@ -193,7 +195,7 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     
     ind0 = np.abs(xarea).argmin() # find where xarea is zero
     area0 = area[ind0]
-    area_clipped = np.clip(area, 0.1, None)
+    area_clipped = np.clip(area, 0.05, None)
 
     def func(t, x, vts, xarea, area_clipped):
 
@@ -213,5 +215,6 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     p = (vts, xarea, area_clipped)
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='DOP853')
+    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval)
+
     return sol.y
