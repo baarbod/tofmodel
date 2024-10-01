@@ -16,7 +16,7 @@ import tofmodel.inverse.io as io
 from tofmodel.forward import posfunclib as pfl
 from tofmodel.forward import simulate as tm
 from tofmodel.path import ROOT_DIR
-import inflowan.processing as proc
+
 
 debug_mode = 0
 
@@ -109,7 +109,6 @@ os.makedirs(dataset_simulated_batched_dir, exist_ok=True)
 
 
 def prepare_simulation_inputs():
-    
     print(f"running for batch size {batch_size}")
     
     # generate for all samples in dataset
@@ -117,11 +116,11 @@ def prepare_simulation_inputs():
 
     # for compute number of protons for every sample
     with Pool() as pool:
-        x0_array_list = pool.starmap(compute_sample_init_position, enumerate(input_data))    
+        X0_list = pool.starmap(compute_sample_init_positions, enumerate(input_data))    
     
-    inputs = [{'input_data': input_data[i], 'x0_array': x0_array_list[i]} for i in range(len(input_data))]
+    inputs = [{'input_data': input_data[i], 'x0_array': X0_list[i]} for i in range(len(input_data))]
     
-    inputs_path = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_task{task_id:02}.pkl")
+    inputs_path = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_task{task_id:03}.pkl")
     with open(inputs_path, "wb") as f:
         pickle.dump(inputs, f)
     
@@ -137,8 +136,8 @@ def sort_simulation_inputs():
         print(f"rerunning {batch_size*num_missing_batch} samples for {num_missing_batch} missing batches")
         input_data = define_input_params(batch_size*num_missing_batch)
         with Pool() as pool:
-            x0_array_list = pool.starmap(compute_sample_init_position, enumerate(input_data))    
-            inputs = [{'input_data': input_data[i], 'x0_array': x0_array_list[i]} for i in range(len(input_data))]
+            X0_list = pool.starmap(compute_sample_init_positions, enumerate(input_data))    
+            inputs = [{'input_data': input_data[i], 'x0_array': X0_list[i]} for i in range(len(input_data))]
             inputs_path_missing = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_missing_batch_REDO.pkl")
             with open(inputs_path_missing, "wb") as f:
                 pickle.dump(inputs, f)
@@ -150,7 +149,7 @@ def sort_simulation_inputs():
             batch_inputs = pickle.load(f)
         for sample_input in batch_inputs:
             inputs_all_samples.append(sample_input)
-            nproton_list.append(sample_input['x0_array'].size)
+            nproton_list.append(sample_input['x0_array'].shape[0])
         
     inputs_path = os.path.join(dataset_full_dir, f"inputs_list_{len(inputs_all_samples)}_samples.pkl")
     with open(inputs_path, "wb") as f:
@@ -165,6 +164,7 @@ def sort_simulation_inputs():
 
     if len(inputs_all_samples_sorted) != nsample:
         print(f"WARNING: total number of inputs do not match defined number of samples")
+ 
  
 def get_sampling_bounds(ff, f1, ff_card=1):
     
@@ -216,7 +216,7 @@ def define_input_params(num_sample):
     return input_data
 
 
-def compute_sample_init_position(isample, sample_input_data):
+def compute_sample_init_positions(isample, sample_input_data):
     
     # sample_input_data = input_data[isample]
     
@@ -230,13 +230,15 @@ def compute_sample_init_position(isample, sample_input_data):
     nslice = scan_param['num_slice']
     npulse = scan_param["num_pulse"]
     npulse_offset = scan_param["num_pulse_baseline_offset"]
-
+    alpha = np.array(scan_param['alpha_list'], ndmin=2).T
+    
     # # FOR DEBUGGING
     # np.random.seed(isample + task_id)
     # x0_array = np.random.rand(np.random.randint(6000))
     
     # define velocity
-    t = tr * np.linspace(0, npulse, Yshape[2])
+    dt = 0.01
+    t = np.arange(0, npulse*tr, dt)
     v = utils.define_velocity_fourier(t, velocity_input, frequencies, rand_phase, v_offset)
     
     # add initial zero-flow baseline period 
@@ -246,10 +248,14 @@ def compute_sample_init_position(isample, sample_input_data):
     # define position function
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                         vts=v_with_baseline, xarea=xarea_sample, area=area_sample)
-            
+    
+    npulse += npulse_offset
     dx = 0.01
-    x0_array = tm.set_init_positions(x_func_area, tr, w, npulse + npulse_offset, nslice, dx, progress=False)
-        
+    timings, _ = tm.get_pulse_targets(tr, nslice, npulse, alpha)
+    print(f"running initial position loop...")
+    lower_bound, upper_bound = tm.get_init_position_bounds(x_func_area, np.unique(timings), w, nslice)
+    x0_array = np.arange(lower_bound, upper_bound + dx, dx)
+
     return x0_array
 
 
@@ -260,7 +266,7 @@ def simulate_parameter_set(idx, input_data):
     scan_param, Xshape, Xtype, Yshape, Ytype, task_id, \
     xarea_sample, area_sample, gauss_noise_std = input_data['input_data']
     
-    x0_array = input_data['x0_array']
+    # Xproton = input_data['Xproton']
     
     # scan parameters
     tr = scan_param['repetition_time']
@@ -280,7 +286,8 @@ def simulate_parameter_set(idx, input_data):
     Y = np.ndarray(Yshape, dtype=Ytype, buffer=Yshm.buf)
     
     # define velocity
-    t = tr * np.linspace(0, npulse, Yshape[2])
+    dt = 0.01
+    t = np.arange(0, npulse*tr, dt)
     v = utils.define_velocity_fourier(t, velocity_input, frequencies, rand_phase, v_offset)
     
     # add initial zero-flow baseline period 
@@ -297,7 +304,7 @@ def simulate_parameter_set(idx, input_data):
     # solve the tof forward model including the extra offset pulses
     # turn off multitreading because we are already distributing each simulation across cores 
     s_raw = tm.simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, 
-                               x_func_area, x0_array_given=x0_array, multithread=False)[:, 0:3]
+                               x_func_area, multithread=False)[:, 0:3]
     
     # # FOR DEBUGGING
     # s_raw = np.random.rand(npulse, 3)
@@ -306,7 +313,7 @@ def simulate_parameter_set(idx, input_data):
     s_raw = s_raw[npulse_offset:, :]
     
     # preprocess raw simulated signal 
-    s = proc.scale_epi(s_raw)
+    s = utils.scale_epi(s_raw)
     s -= np.mean(s, axis=0)
     
     # # Add zero-mean gaussian noise
@@ -321,7 +328,9 @@ def simulate_parameter_set(idx, input_data):
     X[idx, 3, :] = xarea_sample
     X[idx, 4, :] = area_sample
     
-    Y[idx, 0, :] = v
+    v_downsample = utils.downsample(v, Yshape[2])
+    
+    Y[idx, 0, :] = v_downsample
     
     
 def run_simulation():
@@ -369,10 +378,10 @@ def run_simulation():
         json.dump(param, fp, indent=4)
 
     # save training data simulation information
-    output_path = os.path.join(dataset_simulated_batched_dir, f"output_{Xshape[0]}_samples_task{task_id:02}" '.pkl')
+    output_path = os.path.join(dataset_simulated_batched_dir, f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
     print('Saving updated training_data set...')   
     with open(output_path, "wb") as f:
-        pickle.dump([x, y], f)
+        pickle.dump([x, y, input_data_batch], f)
     print('Finished saving.')   
 
     # close shared memory
@@ -385,15 +394,17 @@ def combine_simulated_batches():
     folder = os.path.join(dataset_root, dataset_name)
     x_list = []
     y_list = []
+    inputs_list = []
     config_flag = 0
     for file in os.listdir(dataset_simulated_batched_dir):
         if file.endswith('.pkl'):
             filepath = os.path.join(dataset_simulated_batched_dir, file)
             if os.path.isfile(filepath):
                 with open(filepath, "rb") as f:
-                    x, y = pickle.load(f)
+                    x, y, input_data_batch = pickle.load(f)
                 x_list.append(x)
                 y_list.append(y)
+                inputs_list +=  input_data_batch
                 print(f"combined and removed {file}")
                 os.remove(filepath)
         if file.endswith('_used.json') and not config_flag:
@@ -409,7 +420,7 @@ def combine_simulated_batches():
     filepath = os.path.join(folder, filename)
     print('Saving updated training_data set...')   
     with open(filepath, "wb") as f:
-        pickle.dump([x, y], f)
+        pickle.dump([x, y, inputs_list], f)
     print('Finished saving.')   
 
 
@@ -424,8 +435,8 @@ def cleanup_directories():
     shutil.rmtree(dataset_simulated_batched_dir)
     print(f"temporary simulated batched directory {dataset_simulated_batched_dir} removed succesfully")
     
-
-if __name__ == '__main__':
     
+if __name__ == '__main__':
+
     # run given function name
     globals()[sys.argv[3]]()
