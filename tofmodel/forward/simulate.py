@@ -64,36 +64,17 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     # find the time and target slice of each RF pulse
     timings_with_repeats, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
 
+    print(' ')
     # define proton positions over time
     if X_given is None:
         tstart_pos = time.time()
         lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings_with_repeats), w, nslice)
-        x0 = np.arange(lower_bound, upper_bound, dx)
-        X = x_func(np.unique(timings_with_repeats), x0)
-        print(f'Position calculation time: {time.time() - tstart_pos:.2f} seconds')
+        X = compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
+        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1)
+        print(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given)
-        print('Using given proton positions. Skipping calculation...')
-    print('=================================================================')
-    print(' ')
-    
-    # increase density until no proton count is below the minimum allowance
-    min_proton_count = 3
-    num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
-    ind_sparse = np.where(num_proton_in_slice < min_proton_count)
-    if ind_sparse[0].size > 0:
-        print(f"initial proton count is {X.shape[0]}")
-        print(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons")
-        print(f"running density increase algorithm...")
-        count = 0
-        while ind_sparse[0].size > 0:
-            count += 1
-            X = increase_position_matrix_density(X, dx)  
-            num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
-            ind_sparse = np.where(num_proton_in_slice <= min_proton_count)
-        print(f"finished after {count} iterations")
-        print(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
-        print(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+        print('using given proton positions. Skipping calculation...')
         
     nproton = X.shape[0]
     print('running simulation with ' + str(nproton) + ' protons...')
@@ -165,6 +146,36 @@ def increase_position_matrix_density(X, thres):
     return Xnew_sorted
 
 
+def compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx):
+    x0 = np.arange(lower_bound, upper_bound, dx)
+    X = x_func(np.unique(timings_with_repeats), x0)
+    return X
+
+
+def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1, maxiter=2):
+    
+    # increase density until no proton count is below the minimum allowance
+    num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
+    ind_sparse = np.where(num_proton_in_slice < min_proton_count)
+    if ind_sparse[0].size > 0:
+        print(f"initial proton count is {X.shape[0]}")
+        print(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons")
+        print(f"running density increase algorithm...")
+        count = 0
+        while ind_sparse[0].size > 0:
+            count += 1
+            if count > maxiter:
+                continue
+            X = increase_position_matrix_density(X, 5 * dx) 
+            num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
+            ind_sparse = np.where(num_proton_in_slice < min_proton_count)
+        print(f"finished after {count} iterations")
+        print(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
+        print(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+
+    return X
+
+
 def get_init_position_bounds(x_func, timings, w, nslice):
     """ Optimally define bounds of proton initial positions 
 
@@ -203,7 +214,7 @@ def get_init_position_bounds(x_func, timings, w, nslice):
         counter += 1
         assert counter < max_iter, f'Warning: counter={counter} for finding upper bound exceeded limit'
     
-    lower_bound = 0 - 0.01
+    lower_bound = -w*nslice
     x = x_func(timings, np.array(lower_bound, ndmin=1))
     counter = 0
     while does_x_touch_slices(x):
