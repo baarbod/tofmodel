@@ -55,7 +55,7 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     p = (vts, xarea, area_clipped)
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='RK23')
+    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='DOP853')
 
     return sol.y
 
@@ -65,6 +65,12 @@ def compute_position_constant(t, x0, v0):
     t = t[np.newaxis, :]    # Now t has shape (1, m)
     X = v0 * t + x0
     return X
+
+
+def compute_position_sine(t, x0, v1, v2, w0):
+    amplitude = (v2 - v1) / 2
+    offset = v1 + amplitude
+    return offset*t + amplitude / w0 * np.sin(w0 * t) + x0
 
 
 def compute_position_fourier(t, x0, an, bn, w0):
