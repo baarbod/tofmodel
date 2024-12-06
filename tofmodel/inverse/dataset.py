@@ -51,14 +51,18 @@ frequencies = np.arange(fstart, fend, fspacing)
 
 # sampling parameters
 sampling_param = param['sampling']
+fslow_lower = sampling_param['fslow_lower']
+fslow_upper = sampling_param['fslow_upper']
 fresp_lower = sampling_param['fresp_lower']
 fresp_upper = sampling_param['fresp_upper']
 fcard_lower = sampling_param['fcard_lower']
 fcard_upper = sampling_param['fcard_upper']
 voffset_lower = sampling_param['voffset_lower']
 voffset_upper = sampling_param['voffset_upper']
-fslow_fact = sampling_param['fslow_fact']
-fslow_exp = sampling_param['fslow_exp']
+fslow_scale = sampling_param['fslow_scale']
+fresp_scale = sampling_param['fresp_scale']
+fcard_scale = sampling_param['fcard_scale']
+slow_fsd = sampling_param['slow_fsd']
 breath_fsd = sampling_param['breath_fsd']
 cardiac_fsd = sampling_param['cardiac_fsd']
 global_lower_bound = sampling_param['global_lower_bound']
@@ -68,7 +72,10 @@ gauss_noise_upper = sampling_param['gauss_noise_upper']
 area_scale_lower = sampling_param['area_scale_lower']
 area_scale_upper = sampling_param['area_scale_upper']
 slc1_offset_lower = sampling_param['slc1_offset_lower']
-slc1_offset_upper= sampling_param['slc1_offset_upper']
+slc1_offset_upper = sampling_param['slc1_offset_upper']
+prob_phantom_mode = sampling_param['prob_phantom_mode']
+fphantom_scale = sampling_param['fphantom_scale']
+phantom_noise_fact = sampling_param['phantom_noise_fact']
 
 # input/output parameters
 nsample = param['data_simulation']['num_samples']
@@ -124,24 +131,12 @@ def prepare_simulation_inputs():
     with open(inputs_path, "wb") as f:
         pickle.dump(inputs, f)
     
-    
+
 def sort_simulation_inputs():
 
     inputs_all_samples = []
     nproton_list = []
-    
-    # check and fill in missed batches before sorting
-    if len(os.listdir(dataset_batched_dir)) != nbatch:
-        num_missing_batch = np.abs(len(os.listdir(dataset_batched_dir)) - nbatch)
-        print(f"rerunning {batch_size*num_missing_batch} samples for {num_missing_batch} missing batches")
-        input_data = define_input_params(batch_size*num_missing_batch)
-        with Pool() as pool:
-            X0_list = pool.starmap(compute_sample_init_positions, enumerate(input_data))    
-            inputs = [{'input_data': input_data[i], 'x0_array': X0_list[i]} for i in range(len(input_data))]
-            inputs_path_missing = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_missing_batch_REDO.pkl")
-            with open(inputs_path_missing, "wb") as f:
-                pickle.dump(inputs, f)
-    
+
     # combine all samples into lists
     for batch_name in os.listdir(dataset_batched_dir):
         path = os.path.join(dataset_batched_dir, batch_name)
@@ -154,24 +149,30 @@ def sort_simulation_inputs():
     inputs_path = os.path.join(dataset_full_dir, f"inputs_list_{len(inputs_all_samples)}_samples.pkl")
     with open(inputs_path, "wb") as f:
         pickle.dump(inputs_all_samples, f)
-    
-    # save sorted input data list 
+
+    # sort dataset by nproton
     sort_indices = np.argsort(nproton_list)
     inputs_all_samples_sorted = [inputs_all_samples[i] for i in sort_indices]
-    inputs_path = os.path.join(dataset_sorted_dir, f"inputs_list_sorted_{len(inputs_all_samples_sorted)}_samples.pkl")
-    with open(inputs_path, "wb") as f:
-        pickle.dump(inputs_all_samples_sorted, f)    
-
-    if len(inputs_all_samples_sorted) != nsample:
-        print(f"WARNING: total number of inputs do not match defined number of samples")
+        
+    # distribute sorted full dataset into nbatch batches
+    nsample = len(inputs_all_samples_sorted)
+    batch_size = nsample // nbatch
+    chunks = [inputs_all_samples_sorted[x:x+batch_size] for x in range(0, len(inputs_all_samples_sorted), batch_size)]
+    
+    for idx, chunk in enumerate(chunks):
+        override_task_id = idx + 1
+        inputs_path = os.path.join(dataset_sorted_dir, f"inputs_list_{len(chunk)}_samples_task{override_task_id:03}.pkl")
+        print(f"saved to {inputs_path}")
+        with open(inputs_path, "wb") as f:
+            pickle.dump(chunk, f)  
  
  
-def get_sampling_bounds(ff, f1, ff_card=1):
+def get_sampling_bounds(ff, fslow, fresp, fcard):
     
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
-    slow = np.exp(fslow_exp * -ff)/fslow_fact
-    resp = (N(ff, f1, breath_fsd) + N(ff, 2*f1, breath_fsd)/3 + N(ff, 3*f1, breath_fsd)/6) / 3.33
-    card = N(ff, ff_card, cardiac_fsd) / 3.33
+    slow = fslow_scale * N(ff, fslow, slow_fsd)
+    resp = fresp_scale * (N(ff, fresp, breath_fsd) + N(ff, 2*fresp, breath_fsd)/3 + N(ff, 3*fresp, breath_fsd)/6)
+    card = fcard_scale * N(ff, fcard, cardiac_fsd)
     
     upper = slow + resp + card + global_offset
     lower = np.ones(np.shape(ff))*global_lower_bound
@@ -185,29 +186,59 @@ def define_input_params(num_sample):
     # random sampling constrained by lower and upper bounds
     for _ in range(num_sample):
         
-        # define frequency bounds
-        mu = np.random.uniform(low=fresp_lower, high=fresp_upper)
-        ff_card = np.random.uniform(low=fcard_lower, high=fcard_upper) 
-        bound_array = get_sampling_bounds(frequencies, mu, ff_card=ff_card)
+        p = np.random.uniform() # probabilty used to choose sampling mode (human or phantom)
         
-        # define velocity amplitudes and timeshifts
-        rand_numbers = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
-        rand_phase = np.random.uniform(low=0, high=1/frequencies)
-        v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)
+        prob_phantom_mode = 0.2
+        if p < prob_phantom_mode:
+            
+            # randomly choose one of the phantom frequencies
+            phantom_frequencies = [0.05, 0.1, 0.2]
+            freq_ind = np.random.randint(len(phantom_frequencies))
+            osc_freq = phantom_frequencies[freq_ind]
+            
+            # randomly assign amplitude at the frequency, with two harmonics
+            rand_numbers = np.zeros(frequencies.size)
+            osc_mag = np.random.uniform(low=0, high=fphantom_scale)            
+            rand_numbers[int(osc_freq / fspacing) - 1] = osc_mag
+            rand_numbers[int(2*osc_freq / fspacing) - 1] = osc_mag / 3
+            rand_numbers[int(3*osc_freq / fspacing) - 1] = osc_mag / 6
+            rand_phase = np.random.uniform(low=0, high=1/frequencies)
 
-        # define noise injection
-        gauss_noise_std = np.random.uniform(low=gauss_noise_lower, high=gauss_noise_upper)
-        
-        # define cross-sectional area
-        area_subject_ind = np.random.randint(len(subjects))
-        area_scale_factor = np.random.uniform(low=area_scale_lower, high=area_scale_upper)
-        slc1_offset = np.random.uniform(low=slc1_offset_lower, high=slc1_offset_upper)
-        xarea = Ax[:, area_subject_ind]
-        area = Ay[:, area_subject_ind]
-        widest_position = xarea[np.argmax(area)]
-        xarea_sample = xarea - widest_position - slc1_offset
-        area_sample = area_scale_factor * area
-        
+            v_offset = 0
+
+            # define reduced noise injection for phantom
+            gauss_noise_std = np.random.uniform(low=gauss_noise_lower, high=gauss_noise_upper*phantom_noise_fact)
+            
+            # define cross-sectional area
+            area_subject_ind = -1
+            xarea_sample = Ax[:, area_subject_ind]
+            area_sample =Ay[:, area_subject_ind]
+        else:
+            # define frequency bounds
+            fslow = np.random.uniform(low=fslow_lower, high=fslow_upper)
+            fresp = np.random.uniform(low=fresp_lower, high=fresp_upper)
+            fcard = np.random.uniform(low=fcard_lower, high=fcard_upper) 
+            bound_array = get_sampling_bounds(frequencies, fslow, fresp, fcard)
+            
+            # define velocity amplitudes and timeshifts
+            rand_numbers = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
+            rand_phase = np.random.uniform(low=0, high=1/frequencies)
+            
+            v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)
+
+            # define noise injection
+            gauss_noise_std = np.random.uniform(low=gauss_noise_lower, high=gauss_noise_upper)
+            
+            # define cross-sectional area
+            area_subject_ind = np.random.randint(len(subjects) - 1) # subtract one to not include straight tube
+            area_scale_factor = np.random.uniform(low=area_scale_lower, high=area_scale_upper)
+            slc1_offset = np.random.uniform(low=slc1_offset_lower, high=slc1_offset_upper)
+            xarea = Ax[:, area_subject_ind]
+            area = Ay[:, area_subject_ind]
+            widest_position = xarea[np.argmax(area)]
+            xarea_sample = xarea - widest_position - slc1_offset
+            area_sample = area_scale_factor * area
+            
         # store all variables
         input_data.append([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), 
                                 scan_param, Xshape, Xtype, Yshape, Ytype, task_id, 
@@ -237,7 +268,7 @@ def compute_sample_init_positions(isample, sample_input_data):
     # x0_array = np.random.rand(np.random.randint(6000))
     
     # define velocity
-    dt = 0.01
+    dt = 0.1
     t = np.arange(0, npulse*tr, dt)
     v = utils.define_velocity_fourier(t, velocity_input, frequencies, rand_phase, v_offset)
     
@@ -286,7 +317,7 @@ def simulate_parameter_set(idx, input_data):
     Y = np.ndarray(Yshape, dtype=Ytype, buffer=Yshm.buf)
     
     # define velocity
-    dt = 0.01
+    dt = 0.1
     t = np.arange(0, npulse*tr, dt)
     v = utils.define_velocity_fourier(t, velocity_input, frequencies, rand_phase, v_offset)
     
@@ -316,10 +347,10 @@ def simulate_parameter_set(idx, input_data):
     s = utils.scale_epi(s_raw)
     s -= np.mean(s, axis=0)
     
-    # # Add zero-mean gaussian noise
-    # mean = 0
-    # noise = np.random.normal(mean, gauss_noise_std, (Xshape[2], 3))
-    # s += noise
+    # Add zero-mean gaussian noise
+    mean = 0
+    noise = np.random.normal(mean, gauss_noise_std, (Xshape[2], 3))
+    s += noise
 
     # fill matricies
     X[idx, 0, :] = s[:, 0].squeeze()
@@ -334,22 +365,27 @@ def simulate_parameter_set(idx, input_data):
     
     
 def run_simulation():
-
-    if len(os.listdir(dataset_sorted_dir)) > 1:
-        print(f"found {len(os.listdir(dataset_sorted_dir))} but expected 1 file in sorted dataset inputs folder")
-        return 0
     
-    file = os.listdir(dataset_sorted_dir)[0]
-    inputs_path = os.path.join(dataset_sorted_dir, file)
-    with open(inputs_path, 'rb') as f:
-        input_data = pickle.load(f)
-    input_data_batch = input_data[(task_id-1)*batch_size:(task_id)*batch_size]
+    # find the correct input data batch based on the task_id
+    for file in os.listdir(dataset_sorted_dir):
+        if f"task{task_id:03}.pkl" in file:
+            inputs_path = os.path.join(dataset_sorted_dir, file)
+            with open(inputs_path, 'rb') as f:
+                input_data_batch = pickle.load(f)
     
-    for i in range(len(input_data_batch)):
-        input_data_batch[i]['input_data'][9] = task_id
-
+    print(f"loaded {inputs_path}")
+    
     # mark start time
     tstart = time.time()
+
+    # override array shapes based on actual dimensions
+    batch_size = len(input_data_batch)
+    Xshape = (batch_size, num_input, input_size)
+    Yshape = (batch_size, num_output, output_size)
+    for i in range(len(input_data_batch)):
+        input_data_batch[i]['input_data'][9] = task_id
+        input_data_batch[i]['input_data'][5] = Xshape
+        input_data_batch[i]['input_data'][7] = Yshape
 
     X = np.zeros(Xshape)
     Y = np.zeros(Yshape)
@@ -405,8 +441,8 @@ def combine_simulated_batches():
                 x_list.append(x)
                 y_list.append(y)
                 inputs_list +=  input_data_batch
-                print(f"combined and removed {file}")
-                os.remove(filepath)
+                print(f"combined and NOT removed {file}")
+                # os.remove(filepath)
         if file.endswith('_used.json') and not config_flag:
             filepath = os.path.join(dataset_simulated_batched_dir, file)
             shutil.move(filepath, folder)
@@ -437,6 +473,6 @@ def cleanup_directories():
     
     
 if __name__ == '__main__':
-
+    
     # run given function name
     globals()[sys.argv[3]]()
