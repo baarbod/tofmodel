@@ -17,8 +17,8 @@ from tofmodel.path import ROOT_DIR
 
 
 parser = argparse.ArgumentParser(description='Script for training neural network on simulated dataset')
-parser.add_argument('--datafolder', help='name of folder containing simulated dataset and config file')
-parser.add_argument('--epochs', default=10, type=int, help='number of total epochs to run (default: 10)')
+parser.add_argument('--datafolder', help='path to folder containing simulated dataset and config file')
+parser.add_argument('--epochs', default=30, type=int, help='number of total epochs to run (default: 10)')
 parser.add_argument('--batch', default=16, type=int, help='batch size (default: 16)')
 parser.add_argument('--lr', default=0.001, type=float, help='initial learning rate (default: 0.1)')
 args = parser.parse_args()
@@ -36,7 +36,7 @@ for file in os.listdir(sim_dataset_path):
 # load training data set 
 training_data = os.path.join(sim_dataset_path, training_data_filename)    
 with open(training_data, "rb") as f:
-    X, y = pickle.load(f)
+    X, y, _ = pickle.load(f)
     
 X = X.astype(float)
 y = y.astype(float)
@@ -132,9 +132,9 @@ with torch.no_grad():
 
 param['MSE'] = float(MSE)
 # create folder associated with this simulation
-folder_root = os.path.join(ROOT_DIR, "experiments")
+folder_root = os.path.join(sim_dataset_path, "experiments")
 formatted_datetime =  utils.get_formatted_day_time()
-project_name = param['info']['project']
+project_name = param['info']['name']
 folder_name = f"{formatted_datetime}_training_run_{project_name}"
 folder = os.path.join(folder_root, folder_name)
 if not os.path.exists(folder):
