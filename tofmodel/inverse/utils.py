@@ -225,16 +225,19 @@ def get_formatted_day_time():
     return formatted_datetime
 
 
-def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, feature_length=200):
-    nwindows = int(s_data_for_nn.shape[0] / feature_length)
-    velocity_NN = np.zeros(nwindows * feature_length)
+def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, input_feature_length=200, output_feature_length=1000):
+    nwindows = int(s_data_for_nn.shape[0] / input_feature_length)
+    if nwindows == 0:
+        s_data_for_nn = np.pad(s_data_for_nn, pad_width=((0, input_feature_length-s_data_for_nn.shape[0]), (0, 0)), mode='reflect')
+        nwindows = int(s_data_for_nn.shape[0] / input_feature_length)
+    velocity_NN = np.zeros(nwindows * output_feature_length)
     for window in range(nwindows):
-        ind1 = window*feature_length
-        ind2 = (window+1)*feature_length
+        ind1 = window*input_feature_length
+        ind2 = (window+1)*input_feature_length
         s_window = s_data_for_nn[ind1:ind2, :]
         
         # put features in the input array
-        x = np.zeros((1, 5, feature_length))
+        x = np.zeros((1, 5, input_feature_length))
         x[0, 0, :] = s_window[:, 0].squeeze()
         x[0, 1, :] = s_window[:, 1].squeeze()
         x[0, 2, :] = s_window[:, 2].squeeze()
@@ -245,7 +248,9 @@ def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, feat
         x = torch.tensor(x, dtype=torch.float32)
         y_predicted = NN_model(x).detach().numpy().squeeze()
 
-        velocity_NN[ind1:ind2] = y_predicted
+        ind1_out = window*output_feature_length
+        ind2_out = (window+1)*output_feature_length
+        velocity_NN[ind1_out:ind2_out] = y_predicted
     return velocity_NN
 
 
