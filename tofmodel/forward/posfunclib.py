@@ -55,7 +55,7 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     p = (vts, xarea, area_clipped)
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='DOP853')
+    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='RK23')
 
     return sol.y
 
