@@ -7,4 +7,4 @@ config/
 test/
 experiments/
 data/
-scripts/logs
+scripts/
