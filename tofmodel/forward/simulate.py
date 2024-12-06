@@ -63,19 +63,32 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     
     # find the time and target slice of each RF pulse
     timings_with_repeats, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
-
     print(' ')
     # define proton positions over time
     if X_given is None:
         tstart_pos = time.time()
         lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings_with_repeats), w, nslice)
         X = compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
-        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1)
+        
+        # trim initialized protons that don't touch slices
+        print(f"trimming protons that never touch slices")
+        def does_x_touch_slices(x):
+            return ((x < w*nslice) & (x > 0)).any()
+        proton_to_remove = []
+        for iproton in range(X.shape[0]):
+            if not does_x_touch_slices(X[iproton, :]):
+                proton_to_remove.append(iproton)
+        X = np.delete(X, proton_to_remove, axis=0)
+        print(f"found {len(proton_to_remove)} protons to be trimmed")
+        print(f"trimmed upper bound: {X[-1, 0]} cm")
+        print(f"trimmed lower bound: {X[0, 0]} cm")
+        
+        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5)
         print(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given)
         print('using given proton positions. Skipping calculation...')
-        
+    
     nproton = X.shape[0]
     print('running simulation with ' + str(nproton) + ' protons...')
 
@@ -108,7 +121,8 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
             signal += compute_proton_signal_contribution(iproton, params[iproton])
                 
     print(f'total simulation time: {time.time() - tstart_sim:.2f} seconds')
-
+    print(' ')
+    
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
     signal /= num_proton_in_slice
     assert not np.isnan(signal).any(), 'Warning: NaN values found in signal array'
@@ -152,7 +166,7 @@ def compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
     return X
 
 
-def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1, maxiter=2):
+def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1, maxiter=200):
     
     # increase density until no proton count is below the minimum allowance
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
@@ -165,8 +179,12 @@ def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_c
         while ind_sparse[0].size > 0:
             count += 1
             if count > maxiter:
-                continue
-            X = increase_position_matrix_density(X, 5 * dx) 
+                print(f"WARNING: reached max count iter of {maxiter}")
+                print(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
+                print(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+                return X
+            thres = w / min_proton_count # threshold distance between adjacent position curves for increasing proton density
+            X = increase_position_matrix_density(X, thres) 
             num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
             ind_sparse = np.where(num_proton_in_slice < min_proton_count)
         print(f"finished after {count} iterations")
@@ -204,6 +222,14 @@ def get_init_position_bounds(x_func, timings, w, nslice):
 
     max_iter = 200
     
+    # need to make sure timings array is linear ramp because otherwise issues can arise.
+    # need to update docstring. position during simulation only needs to be evaluated as pulses, 
+    # but for determining position bounds we need to know in between positions in cases where pulses
+    # are very spaced out
+    dt = 0.1
+    timings = np.arange(timings.min(), timings.max(), dt)
+    
+    # upper_bound = 2*w*nslice + 0.01
     upper_bound = w*nslice + 0.01
     x = x_func(timings, np.array(upper_bound, ndmin=1))
     counter = 0
@@ -214,6 +240,7 @@ def get_init_position_bounds(x_func, timings, w, nslice):
         counter += 1
         assert counter < max_iter, f'Warning: counter={counter} for finding upper bound exceeded limit'
     
+    # lower_bound = -2*w*nslice
     lower_bound = -w*nslice
     x = x_func(timings, np.array(lower_bound, ndmin=1))
     counter = 0
@@ -225,10 +252,10 @@ def get_init_position_bounds(x_func, timings, w, nslice):
         assert counter < max_iter, f'Warning: counter={counter} for finding lower bound exceeded limit'
     
     # place buffers on bounds just to be sure
-    upper_bound += 1
-    lower_bound -= 1
-    print(f"upper bound: {upper_bound} cm")
-    print(f"lower bound: {lower_bound} cm")
+    upper_bound *= 1.5
+    lower_bound *= 1.5
+    print(f"initial upper bound: {upper_bound} cm")
+    print(f"initial lower bound: {lower_bound} cm")
     
     return lower_bound, upper_bound
 
@@ -242,6 +269,10 @@ def compute_proton_signal_contribution(iproton, params):
     proton_slice = np.floor(np.repeat(Xproton, multi_factor) / w)
     pulse_recieve_ind = np.where(proton_slice == pulse_slice)[0]
 
+    # # flip angle gaussian
+    # N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
+    # proton_pos = np.repeat(Xproton, multi_factor)
+
     tprev = float('nan')
     dt_list = np.zeros(np.size(pulse_recieve_ind))
     
@@ -249,6 +280,11 @@ def compute_proton_signal_contribution(iproton, params):
         dt_list[count] = timings_with_repeats[pulse_id] - tprev
         tprev = timings_with_repeats[pulse_id]
 
+        # # slice selection profile hack
+        # pos_in_slice = proton_pos[pulse_id] % w
+        # k = N(pos_in_slice, w/2, w/3)
+        # fa_scaled = k * fa
+        
         npulse = count + 1  # correcting for zero-based numbering
         s = fre_signal(npulse, fa, tr, t1, dt_list)
         s_proton_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += s
