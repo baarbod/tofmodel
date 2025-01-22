@@ -226,7 +226,8 @@ def get_formatted_day_time():
 
 
 def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, input_feature_length=200, output_feature_length=1000):
-    nwindows = int(s_data_for_nn.shape[0] / input_feature_length)
+    fraction = s_data_for_nn.shape[0] / input_feature_length
+    nwindows = int(fraction)
     if nwindows == 0:
         s_data_for_nn = np.pad(s_data_for_nn, pad_width=((0, input_feature_length-s_data_for_nn.shape[0]), (0, 0)), mode='reflect')
         nwindows = int(s_data_for_nn.shape[0] / input_feature_length)
@@ -251,6 +252,9 @@ def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, inpu
         ind1_out = window*output_feature_length
         ind2_out = (window+1)*output_feature_length
         velocity_NN[ind1_out:ind2_out] = y_predicted
+    if fraction < 1.0:
+        ind_up_to = int(fraction * velocity_NN.shape[0])
+        velocity_NN = velocity_NN[:ind_up_to]
     return velocity_NN
 
 
