@@ -76,6 +76,12 @@ slc1_offset_upper = sampling_param['slc1_offset_upper']
 prob_phantom_mode = sampling_param['prob_phantom_mode']
 fphantom_scale = sampling_param['fphantom_scale']
 phantom_noise_fact = sampling_param['phantom_noise_fact']
+phantom_fsd = sampling_param['phantom_fsd']
+prob_paced_breath_freq = sampling_param['prob_paced_breath_freq']
+upper_fact = sampling_param['upper_fact']
+lower_fact = sampling_param['lower_fact']
+paced_breath_freq = sampling_param['paced_breath_freq']
+
 
 # input/output parameters
 nsample = param['data_simulation']['num_samples']
@@ -167,16 +173,31 @@ def sort_simulation_inputs():
             pickle.dump(chunk, f)  
  
  
-def get_sampling_bounds(ff, fslow, fresp, fcard):
+def get_sampling_bounds_human(ff, fslow, fresp, fcard):
+    
+    fslow_center_amp = np.random.uniform(low=0, high=fslow_scale)
+    fresp_center_amp = np.random.uniform(low=0, high=fresp_scale)
+    fcard_center_amp = np.random.uniform(low=0, high=fcard_scale)
     
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
-    slow = fslow_scale * N(ff, fslow, slow_fsd)
-    resp = fresp_scale * (N(ff, fresp, breath_fsd) + N(ff, 2*fresp, breath_fsd)/3 + N(ff, 3*fresp, breath_fsd)/6)
-    card = fcard_scale * N(ff, fcard, cardiac_fsd)
-    
-    upper = slow + resp + card + global_offset
-    lower = np.ones(np.shape(ff))*global_lower_bound
+    slow = N(ff, fslow, slow_fsd)
+    resp = N(ff, fresp, breath_fsd) + N(ff, 2*fresp, breath_fsd)/3 + N(ff, 3*fresp, breath_fsd)/6
+    card = N(ff, fcard, cardiac_fsd)
 
+    upper = upper_fact*fslow_center_amp*slow + upper_fact*fresp_center_amp*resp + upper_fact*fcard_center_amp*card + global_offset
+    lower = lower_fact*fslow_center_amp*slow + lower_fact*fresp_center_amp*resp + lower_fact*fcard_center_amp*card
+
+    return np.column_stack((lower, upper))
+
+
+def get_sampling_bounds_phantom(ff, osc_freq):
+    N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)    
+    phantom_center_amp = np.random.uniform(low=0, high=fphantom_scale)
+    osc_gaussian = N(ff, osc_freq, phantom_fsd) + N(ff, 2*osc_freq, phantom_fsd)/3 + N(ff, 3*osc_freq, phantom_fsd)/6
+
+    upper = upper_fact*phantom_center_amp*osc_gaussian + global_offset
+    lower = lower_fact*phantom_center_amp*osc_gaussian
+    
     return np.column_stack((lower, upper))
 
 
@@ -186,30 +207,19 @@ def define_input_params(num_sample):
     # random sampling constrained by lower and upper bounds
     for _ in range(num_sample):
         
-        p = np.random.uniform() # probabilty used to choose sampling mode (human or phantom)
-        
-        prob_phantom_mode = 0.2
-        if p < prob_phantom_mode:
+        if np.random.uniform() < prob_phantom_mode: # probabilty used to choose sampling mode (human or phantom)
             
-            # randomly choose one of the phantom frequencies
             phantom_frequencies = [0.05, 0.1, 0.2]
             freq_ind = np.random.randint(len(phantom_frequencies))
             osc_freq = phantom_frequencies[freq_ind]
+            bound_array = get_sampling_bounds_phantom(frequencies, osc_freq)
             
             # randomly assign amplitude at the frequency, with two harmonics
-            rand_numbers = np.zeros(frequencies.size)
-            osc_mag = np.random.uniform(low=0, high=fphantom_scale)            
-            rand_numbers[int(osc_freq / fspacing) - 1] = osc_mag
-            rand_numbers[int(2*osc_freq / fspacing) - 1] = osc_mag / 3
-            rand_numbers[int(3*osc_freq / fspacing) - 1] = osc_mag / 6
+            rand_numbers = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
             rand_phase = np.random.uniform(low=0, high=1/frequencies)
 
             v_offset = 0
-
-            # define reduced noise injection for phantom
             gauss_noise_std = np.random.uniform(low=gauss_noise_lower, high=gauss_noise_upper*phantom_noise_fact)
-            
-            # define cross-sectional area
             area_subject_ind = -1
             xarea_sample = Ax[:, area_subject_ind]
             area_sample =Ay[:, area_subject_ind]
@@ -218,7 +228,12 @@ def define_input_params(num_sample):
             fslow = np.random.uniform(low=fslow_lower, high=fslow_upper)
             fresp = np.random.uniform(low=fresp_lower, high=fresp_upper)
             fcard = np.random.uniform(low=fcard_lower, high=fcard_upper) 
-            bound_array = get_sampling_bounds(frequencies, fslow, fresp, fcard)
+            
+            # override respiration frequency for some of the samples
+            if np.random.uniform() < prob_paced_breath_freq:
+                fresp = paced_breath_freq
+        
+            bound_array = get_sampling_bounds_human(frequencies, fslow, fresp, fcard)
             
             # define velocity amplitudes and timeshifts
             rand_numbers = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
