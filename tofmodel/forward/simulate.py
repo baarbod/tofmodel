@@ -8,7 +8,7 @@ from multiprocessing import Pool
 import os
 
 
-def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, dx=0.01, X_given=None, multithread=False):
+def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, dx=0.01, X_given=None, multithread=False, return_pulse=False, offset_fact=1):
     """ Routine for simulating inflow signals
 
     Parameters
@@ -36,23 +36,33 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         
     multi_factor : int
         multi-band factor
-    
-    dx : float
-        distance between initalized protons (cm), by default 0.01
         
     x_func : func
         position (cm) as a function of time (s) and initial position (cm)
     
-    X_given : numpy.ndarray
+    dx : float, optional
+        distance between initalized protons (cm), by default 0.01
+        
+    X_given : numpy.ndarray, optional
         array of proton positions (cm) directly supplied instead of computing in routine, by default None
 
     multithread : bool, optional
         use mutliple CPU cores, by default True
 
+    return_pulse : bool, optional
+        return Nmatrix variable 
+    
+    offset_fact : int, optional
+        factor multiplied to the steady state signal contribution, by default 1
+        
     Returns
     -------
     signal : numpy.ndarray
-        matrix of signal timeseries (a.u.) for each slice
+        matrix of signal timeseries (a.u.) for each TR/slice
+    
+    Nmatrix : numpy.ndarray, optional
+        matrix of mean number of pulses for each TR/slice
+    
     """
     
     # process scan parameters
@@ -99,9 +109,12 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
 
     # initialize signal array
     signal = np.zeros([npulse, nslice])
-
+    
+    if return_pulse:
+        Nmatrix = np.zeros([npulse, nslice])
+    
     # setup parameters for each proton
-    params = [(npulse, nslice, X[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual)
+    params = [(npulse, nslice, X[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual, offset_fact)
                 for iproton in range(nproton)]
     
     # run simulation
@@ -115,6 +128,14 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         
         for s in result:
             signal += s
+
+        if return_pulse:
+            with Pool() as pool:
+                result_pulse = pool.starmap(compute_pulse_contribution, enumerate(params), chunksize=optimal_chunksize)    
+            
+            for N in result_pulse:
+                Nmatrix += N
+            
     else:
         print(f"using 1 cpu core")
         for iproton in range(nproton):
@@ -125,9 +146,14 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
     signal /= num_proton_in_slice
+    if return_pulse:
+        Nmatrix /= num_proton_in_slice
     assert not np.isnan(signal).any(), 'Warning: NaN values found in signal array'
     
-    return signal
+    if return_pulse:
+        return signal, Nmatrix
+    else:
+        return signal
 
 
 def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
@@ -262,7 +288,7 @@ def get_init_position_bounds(x_func, timings, w, nslice):
 
 def compute_proton_signal_contribution(iproton, params):
     
-    npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
+    npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual, offset_fact = params
     s_proton_contribution = np.zeros([npulse, nslice])
 
     # convert absolute positions to slice location
@@ -286,9 +312,30 @@ def compute_proton_signal_contribution(iproton, params):
         # fa_scaled = k * fa
         
         npulse = count + 1  # correcting for zero-based numbering
-        s = fre_signal(npulse, fa, tr, t1, dt_list)
+        s = fre_signal(npulse, fa, tr, t1, dt_list, offset_fact=offset_fact)
         s_proton_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += s
     return s_proton_contribution
+
+
+def compute_pulse_contribution(iproton, params):
+    
+    npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual, offset_fact = params
+    pulse_contribution = np.zeros([npulse, nslice])
+
+    # convert absolute positions to slice location
+    proton_slice = np.floor(np.repeat(Xproton, multi_factor) / w)
+    pulse_recieve_ind = np.where(proton_slice == pulse_slice)[0]
+
+    tprev = float('nan')
+    dt_list = np.zeros(np.size(pulse_recieve_ind))
+    
+    for count, pulse_id in enumerate(pulse_recieve_ind):
+        dt_list[count] = timings_with_repeats[pulse_id] - tprev
+        tprev = timings_with_repeats[pulse_id]
+
+        npulse = count + 1  # correcting for zero-based numbering
+        pulse_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += npulse
+    return pulse_contribution
 
 
 def get_pulse_targets(tr, nslice, npulse, alpha):
