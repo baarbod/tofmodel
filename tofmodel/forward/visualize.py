@@ -8,17 +8,19 @@ from tofmodel.forward import simulate as tm
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def plot_forward_sim_visual(w, tr, npulse, fa, nslice, alpha, t1, multi_factor, x_func, xlim, ylim, figsize):
+def plot_forward_sim_visual(w, tr, npulse, fa, nslice, alpha, t1, multi_factor, x_func, xlim, ylim, axis=False, figsize=(2, 2)):
+    
+    if not axis:
+        fig, ax = plt.subplots( figsize=figsize)
+    else:
+        fig = None
+        ax = axis
     
     # find the time and target slice of each RF pulse
     timings_with_repeats, pulse_slice = tm.get_pulse_targets(tr, nslice, npulse, np.array(alpha, ndmin=2).T)
     
     # match pulses to their RF cycles
     pulse_tr_actual = tm.match_pulse_to_tr(npulse, nslice)
-    
-    # setup the plot
-    fig, ax = plt.subplots(figsize=figsize)
-    # plt.subplots_adjust(hspace=0.55)
     
     # draw vertical lines for each RF pulse timing (assuming all slices same)
     trvect = timings_with_repeats
