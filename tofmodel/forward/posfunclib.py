@@ -68,6 +68,8 @@ def compute_position_constant(t, x0, v0):
 
 
 def compute_position_sine(t, x0, v1, v2, w0):
+    x0 = x0[:, np.newaxis]  # Now x0 has shape (n, 1)
+    t = t[np.newaxis, :]    # Now t has shape (1, m)
     amplitude = (v2 - v1) / 2
     offset = v1 + amplitude
     return offset*t + amplitude / w0 * np.sin(w0 * t) + x0
