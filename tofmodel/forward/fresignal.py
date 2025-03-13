@@ -33,6 +33,11 @@ def fre_signal(n, fa, tr, t1, dt_list):
 
 # Define equation for flow-enhanced fMRI signal using array method
 def fre_signal_array(n, fa, tr, t1, dt_list, offset_fact=1):
+    
+    # need to implement this properly at some point
+    TE = 30/1000
+    T2 = 1.5
+    
     m0 = 1
     c = np.cos(fa)
     mz_ss = offset_fact * m0 * (1 - np.exp(-tr / t1)) / (1 - np.exp(-tr / t1) * c)
@@ -57,6 +62,6 @@ def fre_signal_array(n, fa, tr, t1, dt_list, offset_fact=1):
         final_mat = c ** mm * nummat / full_array_prod
         series = final_mat
         mzn_pre = m0 * exponentials_full * (np.sum(series) + c ** (n - 1))
-        s = np.sin(fa) * (mzn_pre - mz_ss)
+        s = np.sin(fa) * np.exp(-TE/T2) * (mzn_pre - mz_ss)
 
     return s
