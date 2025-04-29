@@ -7,7 +7,7 @@ import json
 
 
 # load area and corresponding slice positions for a subject
-def load_area(subject, slc1, root_dir='/om/user/bashen/repositories/inflow-analysis'):
+def load_area(subject, slc1, root_dir='/om/user/bashen/repositories/tofmodel/data/area_data'):
     filepath = os.path.join(root_dir, 'data', subject, 'area.txt')
     area = np.loadtxt(filepath) # mm^2
     xarea = 1 * np.arange(np.size(area)) # mm
