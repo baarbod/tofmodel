@@ -57,7 +57,7 @@ def plot_forward_sim_visual(w, tr, npulse, fa, nslice, alpha, t1, multi_factor, 
     for iproton, val_tuple in enumerate(s_proton):
         P = np.repeat(X_for_plot[iproton, :].flatten(), multi_factor)
         
-        draw_fading_curve(ax, trvect, P, val_tuple, s=50, lw=1, marker='.')
+        draw_fading_curve(ax, trvect, P, val_tuple, s=15, lw=0.35, marker='.')
 
     ax.set_xlim(xlim[0], xlim[1])
     ax.set_ylim(ylim[0], ylim[1])
@@ -115,6 +115,7 @@ def draw_fading_curve(ax, tproton, xproton, val_tuple, lw=2, s=None, marker=None
         ax.scatter(tproton[idx], xproton[idx], 
                    color='black',
                    alpha=alpha_fade[idx],
+                   edgecolors='none',
                    s=s,
                    zorder=10,
                    marker=marker)
@@ -136,7 +137,7 @@ def draw_pulse_lines(ax, timings, pulse_slice, w):
         x1 = slc*w
         x2 = (slc+1)*w
         line = lines.Line2D([timing, timing], [x1, x2],
-                            lw=1, alpha=0.5, color='black', axes=ax)
+                            lw=0.5, alpha=0.5, color='black', axes=ax)
         ax.add_line(line)
     
 
