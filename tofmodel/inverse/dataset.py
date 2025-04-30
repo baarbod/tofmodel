@@ -6,10 +6,10 @@ from functools import partial
 import time
 import numpy as np
 import json
-import sys
 import pickle
 import os
 import shutil
+import argparse
 
 import tofmodel.inverse.utils as utils
 import tofmodel.inverse.io as io
@@ -18,114 +18,13 @@ from tofmodel.forward import simulate as tm
 from tofmodel.path import ROOT_DIR
 
 
-debug_mode = 0
-
-if debug_mode:
-    config_path = os.path.join(ROOT_DIR, "config", "config.json")
-    with open(config_path, "r") as jsonfile:
-            param = json.load(jsonfile)
-    task_id = 1   
-    nbatch = param['data_simulation']['num_batches']
-else:
-    # read config json file
-    if len(sys.argv) > 1:
-        config_path = os.path.join(ROOT_DIR, "config", str(sys.argv[2]))
-        print(config_path)
-        with open(config_path, "r") as jsonfile:
-            param = json.load(jsonfile)
-    else:
-        print('Missing config file argument!')
-
-    # define batch number for job array
-    print(sys.argv[1])
-    task_id = int(sys.argv[1])
-    nbatch = param['data_simulation']['num_batches']
-    print(f"on task {task_id} of {nbatch}")
-
-
-# frequency parameters
-fstart = param['data_simulation']['frequency_start']
-fend = param['data_simulation']['frequency_end']
-fspacing = param['data_simulation']['frequency_spacing']
-frequencies = np.arange(fstart, fend, fspacing)
-
-# sampling parameters
-sampling_param = param['sampling']
-fslow_lower = sampling_param['fslow_lower']
-fslow_upper = sampling_param['fslow_upper']
-fresp_lower = sampling_param['fresp_lower']
-fresp_upper = sampling_param['fresp_upper']
-fcard_lower = sampling_param['fcard_lower']
-fcard_upper = sampling_param['fcard_upper']
-voffset_lower = sampling_param['voffset_lower']
-voffset_upper = sampling_param['voffset_upper']
-fslow_scale = sampling_param['fslow_scale']
-fresp_scale = sampling_param['fresp_scale']
-fcard_scale = sampling_param['fcard_scale']
-slow_fsd = sampling_param['slow_fsd']
-breath_fsd = sampling_param['breath_fsd']
-cardiac_fsd = sampling_param['cardiac_fsd']
-global_lower_bound = sampling_param['global_lower_bound']
-global_offset = sampling_param['global_offset']
-gauss_noise_lower = sampling_param['gauss_noise_lower']
-gauss_noise_upper = sampling_param['gauss_noise_upper']
-area_scale_lower = sampling_param['area_scale_lower']
-area_scale_upper = sampling_param['area_scale_upper']
-slc1_offset_lower = sampling_param['slc1_offset_lower']
-slc1_offset_upper = sampling_param['slc1_offset_upper']
-prob_phantom_mode = sampling_param['prob_phantom_mode']
-fphantom_scale = sampling_param['fphantom_scale']
-phantom_noise_fact = sampling_param['phantom_noise_fact']
-phantom_fsd = sampling_param['phantom_fsd']
-prob_paced_breath_freq = sampling_param['prob_paced_breath_freq']
-upper_fact = sampling_param['upper_fact']
-lower_fact = sampling_param['lower_fact']
-paced_breath_freq = sampling_param['paced_breath_freq']
-
-
-# input/output parameters
-nsample = param['data_simulation']['num_samples']
-nbatch = param['data_simulation']['num_batches']
-batch_size = nsample // nbatch
-num_input = param['data_simulation']['num_input_features']
-input_size = param['data_simulation']['input_feature_size']
-num_output = param['data_simulation']['num_output_features']
-output_size = param['data_simulation']['output_feature_size']
-Xshape = (batch_size, num_input, input_size)
-Yshape = (batch_size, num_output, output_size)
-Xtype = param['data_simulation']['Xtype']
-Ytype = param['data_simulation']['Ytype']
-
-# scan parameters
-scan_param = param['scan_param']
-scan_param["num_pulse"] = input_size
-scan_param["num_pulse_baseline_offset"] = 20
-
-# load subject area information
-config_data_path = '/om/user/bashen/repositories/inflow-analysis/config/config_data.json'
-Ax, Ay, subjects = io.load_subject_area_matrix(config_data_path, input_size)
-
-dataset_root = '/om/user/bashen/repositories/tofmodel/data/simulated'
-dataset_name = param['info']['name']
-
-dataset_batched_dir = os.path.join(dataset_root, dataset_name, 'inputs_batched')
-os.makedirs(dataset_batched_dir, exist_ok=True)
-
-dataset_full_dir = os.path.join(dataset_root, dataset_name, 'inputs_all')
-os.makedirs(dataset_full_dir, exist_ok=True)
-
-dataset_sorted_dir = os.path.join(dataset_root, dataset_name, 'inputs_all_sorted')
-os.makedirs(dataset_sorted_dir, exist_ok=True)
-
-dataset_simulated_batched_dir = os.path.join(dataset_root, dataset_name, 'simulated_batched')
-os.makedirs(dataset_simulated_batched_dir, exist_ok=True)
-
-
-def prepare_simulation_inputs():
+def prepare_simulation_inputs(param, dirs, task_id):
+    
+    batch_size = param['data_simulation']['num_samples'] // param['data_simulation']['num_batches']
     print(f"running for batch size {batch_size}")
     
     # generate for all samples in dataset
-    input_data = define_input_params(batch_size)
+    input_data = define_input_params(batch_size, param, task_id)
 
     # for compute number of protons for every sample
     with Pool() as pool:
@@ -133,26 +32,26 @@ def prepare_simulation_inputs():
     
     inputs = [{'input_data': input_data[i], 'x0_array': X0_list[i]} for i in range(len(input_data))]
     
-    inputs_path = os.path.join(dataset_batched_dir, f"inputs_list_{len(inputs)}_samples_task{task_id:03}.pkl")
+    inputs_path = os.path.join(dirs['batched'], f"inputs_list_{len(inputs)}_samples_task{task_id:03}.pkl")
     with open(inputs_path, "wb") as f:
         pickle.dump(inputs, f)
     
 
-def sort_simulation_inputs():
+def sort_simulation_inputs(param, dirs):
 
     inputs_all_samples = []
     nproton_list = []
 
     # combine all samples into lists
-    for batch_name in os.listdir(dataset_batched_dir):
-        path = os.path.join(dataset_batched_dir, batch_name)
+    for batch_name in os.listdir(dirs['batched']):
+        path = os.path.join(dirs['batched'], batch_name)
         with open(path, "rb") as f:
             batch_inputs = pickle.load(f)
         for sample_input in batch_inputs:
             inputs_all_samples.append(sample_input)
             nproton_list.append(sample_input['x0_array'].shape[0])
         
-    inputs_path = os.path.join(dataset_full_dir, f"inputs_list_{len(inputs_all_samples)}_samples.pkl")
+    inputs_path = os.path.join(dirs['full'], f"inputs_list_{len(inputs_all_samples)}_samples.pkl")
     with open(inputs_path, "wb") as f:
         pickle.dump(inputs_all_samples, f)
 
@@ -161,99 +60,131 @@ def sort_simulation_inputs():
     inputs_all_samples_sorted = [inputs_all_samples[i] for i in sort_indices]
         
     # distribute sorted full dataset into nbatch batches
-    nsample = len(inputs_all_samples_sorted)
-    batch_size = nsample // nbatch
+    batch_size = param['data_simulation']['num_samples'] // param['data_simulation']['num_batches']
     chunks = [inputs_all_samples_sorted[x:x+batch_size] for x in range(0, len(inputs_all_samples_sorted), batch_size)]
     
     for idx, chunk in enumerate(chunks):
         override_task_id = idx + 1
-        inputs_path = os.path.join(dataset_sorted_dir, f"inputs_list_{len(chunk)}_samples_task{override_task_id:03}.pkl")
+        inputs_path = os.path.join(dirs['sorted'], f"inputs_list_{len(chunk)}_samples_task{override_task_id:03}.pkl")
         print(f"saved to {inputs_path}")
         with open(inputs_path, "wb") as f:
             pickle.dump(chunk, f)  
  
  
-def get_sampling_bounds_human(ff, fslow, fresp, fcard):
+def get_sampling_bounds_human(param, frequencies, fslow, fresp, fcard):
+
+    sampling_param = param['sampling']
     
-    fslow_center_amp = np.random.uniform(low=0, high=fslow_scale)
-    fresp_center_amp = np.random.uniform(low=0, high=fresp_scale)
-    fcard_center_amp = np.random.uniform(low=0, high=fcard_scale)
+    fslow_center_amp = np.random.uniform(low=0, high=sampling_param['fslow_scale'])
+    fresp_center_amp = np.random.uniform(low=0, high=sampling_param['fresp_scale'])
+    fcard_center_amp = np.random.uniform(low=0, high=sampling_param['fcard_scale'])
     
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
-    slow = N(ff, fslow, slow_fsd)
-    resp = N(ff, fresp, breath_fsd) + N(ff, 2*fresp, breath_fsd)/3 + N(ff, 3*fresp, breath_fsd)/6
-    card = N(ff, fcard, cardiac_fsd)
+    slow = N(frequencies, fslow, sampling_param['slow_fsd'])
+    resp = N(frequencies, fresp, sampling_param['breath_fsd']) + \
+            N(frequencies, 2*fresp, sampling_param['breath_fsd'])/3 + \
+            N(frequencies, 3*fresp, sampling_param['breath_fsd'])/6
+    card = N(frequencies, fcard, sampling_param['cardiac_fsd'])
 
-    upper = upper_fact*fslow_center_amp*slow + upper_fact*fresp_center_amp*resp + upper_fact*fcard_center_amp*card + global_offset
-    lower = lower_fact*fslow_center_amp*slow + lower_fact*fresp_center_amp*resp + lower_fact*fcard_center_amp*card
+    upper = sampling_param['upper_fact']*fslow_center_amp*slow + \
+            sampling_param['upper_fact']*fresp_center_amp*resp + \
+            sampling_param['upper_fact']*fcard_center_amp*card + \
+            sampling_param['global_offset']
+    lower = sampling_param['lower_fact']*fslow_center_amp*slow + \
+            sampling_param['lower_fact']*fresp_center_amp*resp + \
+            sampling_param['lower_fact']*fcard_center_amp*card
 
     return np.column_stack((lower, upper))
 
 
-def get_sampling_bounds_phantom(ff, osc_freq):
+def get_sampling_bounds_phantom(param, frequencies, fphantom):
+    
+    sampling_param = param['sampling']
+    
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)    
-    phantom_center_amp = np.random.uniform(low=0, high=fphantom_scale)
-    osc_gaussian = N(ff, osc_freq, phantom_fsd) + N(ff, 2*osc_freq, phantom_fsd)/3 + N(ff, 3*osc_freq, phantom_fsd)/6
+    phantom_center_amp = np.random.uniform(low=0, high=sampling_param['fphantom_scale'])
+    osc_gaussian = N(frequencies, fphantom, sampling_param['phantom_fsd']) + \
+                    N(frequencies, 2*fphantom, sampling_param['phantom_fsd'])/3 + \
+                    N(frequencies, 3*fphantom, sampling_param['phantom_fsd'])/6
 
-    upper = upper_fact*phantom_center_amp*osc_gaussian + global_offset
-    lower = lower_fact*phantom_center_amp*osc_gaussian
+    upper = sampling_param['upper_fact']*phantom_center_amp*osc_gaussian + sampling_param['global_offset']
+    lower = sampling_param['lower_fact']*phantom_center_amp*osc_gaussian
     
     return np.column_stack((lower, upper))
 
 
-def define_input_params(num_sample):
+def define_input_params(num_sample, param, task_id):
     input_data = []
 
+    sampling_param = param['sampling']
+    simulation_param = param['data_simulation']
+    scan_param = param['scan_param']
+    frequencies = np.arange(simulation_param['frequency_start'], simulation_param['frequency_end'], simulation_param['frequency_spacing'])
+    
+    # load subject area information
+    config_data_path = '/om/user/bashen/repositories/tofmodel/config/config_data.json'
+    Ax, Ay, subjects = io.load_subject_area_matrix(config_data_path, simulation_param['input_feature_size'])
+    
     # random sampling constrained by lower and upper bounds
     for _ in range(num_sample):
         
-        if np.random.uniform() < prob_phantom_mode: # probabilty used to choose sampling mode (human or phantom)
+        if np.random.uniform() < sampling_param['prob_phantom_mode']: # probabilty used to choose sampling mode (human or phantom)
             
             phantom_frequencies = [0.05, 0.1, 0.2]
             freq_ind = np.random.randint(len(phantom_frequencies))
-            osc_freq = phantom_frequencies[freq_ind]
-            bound_array = get_sampling_bounds_phantom(frequencies, osc_freq)
+            fphantom = phantom_frequencies[freq_ind]
+            bound_array = get_sampling_bounds_phantom(param, frequencies, fphantom)
             
             # randomly assign amplitude at the frequency, with two harmonics
             rand_numbers = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
             rand_phase = np.random.uniform(low=0, high=1/frequencies)
 
             v_offset = 0
-            gauss_noise_std = np.random.uniform(low=gauss_noise_lower, high=gauss_noise_upper*phantom_noise_fact)
+            gauss_noise_std = np.random.uniform(low=sampling_param['gauss_noise_lower'], 
+                                                high=sampling_param['gauss_noise_upper']*sampling_param['phantom_noise_fact'])
             area_subject_ind = -1
             xarea_sample = Ax[:, area_subject_ind]
             area_sample =Ay[:, area_subject_ind]
         else:
             # define frequency bounds
-            fslow = np.random.uniform(low=fslow_lower, high=fslow_upper)
-            fresp = np.random.uniform(low=fresp_lower, high=fresp_upper)
-            fcard = np.random.uniform(low=fcard_lower, high=fcard_upper) 
+            fslow = np.random.uniform(low=sampling_param['fslow_lower'], high=sampling_param['fslow_upper'])
+            fresp = np.random.uniform(low=sampling_param['fresp_lower'], high=sampling_param['fresp_upper'])
+            fcard = np.random.uniform(low=sampling_param['fcard_lower'], high=sampling_param['fcard_upper']) 
             
             # override respiration frequency for some of the samples
-            if np.random.uniform() < prob_paced_breath_freq:
-                fresp = paced_breath_freq
+            if np.random.uniform() < sampling_param['prob_paced_breath_freq']:
+                fresp = sampling_param['paced_breath_freq']
         
-            bound_array = get_sampling_bounds_human(frequencies, fslow, fresp, fcard)
+            bound_array = get_sampling_bounds_human(param, frequencies, fslow, fresp, fcard)
             
             # define velocity amplitudes and timeshifts
             rand_numbers = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
             rand_phase = np.random.uniform(low=0, high=1/frequencies)
             
-            v_offset = np.random.uniform(low=voffset_lower, high=voffset_upper)
+            v_offset = np.random.uniform(low=sampling_param['voffset_lower'], 
+                                         high=sampling_param['voffset_upper'])
 
             # define noise injection
-            gauss_noise_std = np.random.uniform(low=gauss_noise_lower, high=gauss_noise_upper)
+            gauss_noise_std = np.random.uniform(low=sampling_param['gauss_noise_lower'], 
+                                                high=sampling_param['gauss_noise_upper'])
             
             # define cross-sectional area
             area_subject_ind = np.random.randint(len(subjects) - 1) # subtract one to not include straight tube
-            area_scale_factor = np.random.uniform(low=area_scale_lower, high=area_scale_upper)
-            slc1_offset = np.random.uniform(low=slc1_offset_lower, high=slc1_offset_upper)
+            area_scale_factor = np.random.uniform(low=sampling_param['area_scale_lower'], 
+                                                  high=sampling_param['area_scale_upper'])
+            slc1_offset = np.random.uniform(low=sampling_param['slc1_offset_lower'], 
+                                            high=sampling_param['slc1_offset_upper'])
             xarea = Ax[:, area_subject_ind]
             area = Ay[:, area_subject_ind]
             widest_position = xarea[np.argmax(area)]
             xarea_sample = xarea - widest_position - slc1_offset
             area_sample = area_scale_factor * area
             
+        batch_size = param['data_simulation']['num_samples'] // param['data_simulation']['num_batches']
+        Xshape = (batch_size, param['data_simulation']['num_input_features'], param['data_simulation']['input_feature_size'])
+        Yshape = (batch_size, param['data_simulation']['num_output_features'], param['data_simulation']['output_feature_size'])
+        Xtype = param['data_simulation']['Xtype']
+        Ytype = param['data_simulation']['Ytype']
         # store all variables
         input_data.append([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), 
                                 scan_param, Xshape, Xtype, Yshape, Ytype, task_id, 
@@ -277,10 +208,6 @@ def compute_sample_init_positions(isample, sample_input_data):
     npulse = scan_param["num_pulse"]
     npulse_offset = scan_param["num_pulse_baseline_offset"]
     alpha = np.array(scan_param['alpha_list'], ndmin=2).T
-    
-    # # FOR DEBUGGING
-    # np.random.seed(isample + task_id)
-    # x0_array = np.random.rand(np.random.randint(6000))
     
     # define velocity
     dt = 0.1
@@ -352,9 +279,6 @@ def simulate_parameter_set(idx, input_data):
     s_raw = tm.simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, 
                                x_func_area, multithread=False)[:, 0:3]
     
-    # # FOR DEBUGGING
-    # s_raw = np.random.rand(npulse, 3)
-    
     # remove inital baseline period from signal
     s_raw = s_raw[npulse_offset:, :]
     
@@ -379,12 +303,12 @@ def simulate_parameter_set(idx, input_data):
     Y[idx, 0, :] = v_downsample
     
     
-def run_simulation():
+def run_simulation(param, dirs, task_id):
     
     # find the correct input data batch based on the task_id
-    for file in os.listdir(dataset_sorted_dir):
+    for file in os.listdir(dirs['sorted']):
         if f"task{task_id:03}.pkl" in file:
-            inputs_path = os.path.join(dataset_sorted_dir, file)
+            inputs_path = os.path.join(dirs['sorted'], file)
             with open(inputs_path, 'rb') as f:
                 input_data_batch = pickle.load(f)
     
@@ -395,8 +319,8 @@ def run_simulation():
 
     # override array shapes based on actual dimensions
     batch_size = len(input_data_batch)
-    Xshape = (batch_size, num_input, input_size)
-    Yshape = (batch_size, num_output, output_size)
+    Xshape = (batch_size, param['data_simulation']['num_input_features'], param['data_simulation']['input_feature_size'])
+    Yshape = (batch_size, param['data_simulation']['num_output_features'], param['data_simulation']['output_feature_size'])
     for i in range(len(input_data_batch)):
         input_data_batch[i]['input_data'][9] = task_id
         input_data_batch[i]['input_data'][5] = Xshape
@@ -407,7 +331,6 @@ def run_simulation():
     X_shared = utils.create_shared_memory(X, name=f"Xarray{task_id}")
     Y_shared = utils.create_shared_memory(Y, name=f"Yarray{task_id}")
 
-    # if __name__ == '__main__':
     # call pool pointing to simulation routine
     with Pool(processes=len(os.sched_getaffinity(0))) as pool:
         print(f"running process with {os.cpu_count()} cpu cores ({len(os.sched_getaffinity(0))} usable)")
@@ -424,12 +347,12 @@ def run_simulation():
     print(f"total number of samples = {x.shape[0]}")
 
     # log simulation experiment information
-    config_path = os.path.join(dataset_simulated_batched_dir, 'config_used.json')
+    config_path = os.path.join(dirs['sim_batched'], 'config_used.json')
     with open(config_path, 'w') as fp:
         json.dump(param, fp, indent=4)
 
     # save training data simulation information
-    output_path = os.path.join(dataset_simulated_batched_dir, f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
+    output_path = os.path.join(dirs['sim_batched'], f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
     print('Saving updated training_data set...')   
     with open(output_path, "wb") as f:
         pickle.dump([x, y, input_data_batch], f)
@@ -440,16 +363,18 @@ def run_simulation():
     utils.close_shared_memory(name=Y_shared.name)
 
 
-def combine_simulated_batches():
+def combine_simulated_batches(param, dirs):
 
+    dataset_name = param['info']['name']
+    dataset_root = os.path.join(ROOT_DIR, 'data', 'simulated')
     folder = os.path.join(dataset_root, dataset_name)
     x_list = []
     y_list = []
     inputs_list = []
     config_flag = 0
-    for file in os.listdir(dataset_simulated_batched_dir):
+    for file in os.listdir(dirs['sim_batched']):
         if file.endswith('.pkl'):
-            filepath = os.path.join(dataset_simulated_batched_dir, file)
+            filepath = os.path.join(dirs['sim_batched'], file)
             if os.path.isfile(filepath):
                 with open(filepath, "rb") as f:
                     x, y, input_data_batch = pickle.load(f)
@@ -459,7 +384,7 @@ def combine_simulated_batches():
                 print(f"combined and NOT removed {file}")
                 # os.remove(filepath)
         if file.endswith('_used.json') and not config_flag:
-            filepath = os.path.join(dataset_simulated_batched_dir, file)
+            filepath = os.path.join(dirs['sim_batched'], file)
             shutil.move(filepath, folder)
             config_flag = 1
 
@@ -475,19 +400,76 @@ def combine_simulated_batches():
     print('Finished saving.')   
 
 
-def cleanup_directories():
+def cleanup_directories(dirs):
     
-    shutil.rmtree(dataset_batched_dir)
-    print(f"temporary inputs batched directory {dataset_batched_dir} removed succesfully")
+    shutil.rmtree(dirs['batched'])
+    print(f"temporary inputs batched directory {dirs['batched']} removed succesfully")
 
-    shutil.rmtree(dataset_full_dir)
-    print(f"temporary all inputs directory {dataset_full_dir} removed succesfully")
+    shutil.rmtree(dirs['full'])
+    print(f"temporary all inputs directory {dirs['full']} removed succesfully")
     
-    shutil.rmtree(dataset_simulated_batched_dir)
-    print(f"temporary simulated batched directory {dataset_simulated_batched_dir} removed succesfully")
+    shutil.rmtree(dirs['sim_batched'])
+    print(f"temporary simulated batched directory {dirs['sim_batched']} removed succesfully")
     
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Run dataset simulations and preprocessing batches"
+    )
+    parser.add_argument("task_id", type=int, help="Batch/task ID (1-based)")
+    parser.add_argument("config_file", type=str, help="Config JSON filename under ROOT_DIR/config")
+    parser.add_argument("action", type=str,
+                        choices=[
+                            "prepare_simulation_inputs", "sort_simulation_inputs",
+                            "run_simulation", "combine_simulated_batches"
+                        ], help="Operation to perform")
+    return parser.parse_args()
+
+
+def load_config(path):
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def setup_directories(dataset_name):
+    dataset_root = os.path.join(ROOT_DIR, 'data', 'simulated')
+    base = os.path.join(dataset_root, dataset_name)
+    dirs = {
+        'batched': os.path.join(base, 'inputs_batched'),
+        'full': os.path.join(base, 'inputs_all'),
+        'sorted': os.path.join(base, 'inputs_all_sorted'),
+        'sim_batched': os.path.join(base, 'simulated_batched')
+    }
+    for d in dirs.values():
+        os.makedirs(d, exist_ok=True)
+    return dirs
+
+
+def main():
+    args = parse_args()
+    param = load_config(args.config_file)
     
+    # override some parameters
+    param['scan_param']["num_pulse"] = param['data_simulation']['input_feature_size']
+    param['scan_param']["num_pulse_baseline_offset"] = 20
+    
+    dirs = setup_directories(param['info']['name'])
+    action = args.action
+    
+    if action == 'prepare_simulation_inputs':
+        nbatch = param['data_simulation']['num_batches']
+        print(f"on task {args.task_id} of {nbatch}")
+        prepare_simulation_inputs(param, dirs, args.task_id)
+    elif action == 'sort_simulation_inputs':
+        sort_simulation_inputs(param, dirs)
+    elif action == 'run_simulation':
+        run_simulation(param, dirs, args.task_id)
+    elif action == 'combine_simulated_batches':
+        combine_simulated_batches(param, dirs)
+    elif action == 'cleanup_directories':
+        cleanup_directories(dirs)
+    else:
+        raise ValueError(f"Unknown action: {action}")
+
 if __name__ == '__main__':
-    
-    # run given function name
-    globals()[sys.argv[3]]()
+    main()
