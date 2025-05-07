@@ -6,9 +6,10 @@ import matplotlib.pyplot as plt
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 from multiprocessing import Pool
 import os
+import logging
 
 
-def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, dx=0.01, X_given=None, multithread=False, return_pulse=False, offset_fact=1):
+def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, dx=0.01, X_given=None, multithread=False, return_pulse=False, enable_logging=False, offset_fact=1):
     """ Routine for simulating inflow signals
 
     Parameters
@@ -55,6 +56,9 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     offset_fact : int, optional
         factor multiplied to the steady state signal contribution, by default 1
         
+    enable_logging : bool, optional
+        turn on logging messages; if off, only log critical messages, by default False
+        
     Returns
     -------
     signal : numpy.ndarray
@@ -65,6 +69,14 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     
     """
     
+    # set up logging configuration
+    if enable_logging:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.disable(logging.CRITICAL)  # Disable all logging
+   
+    logger = logging.getLogger(__name__)
+    
     # process scan parameters
     fa = fa * np.pi / 180
     alpha = np.array(alpha, ndmin=2).T
@@ -73,7 +85,6 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
     
     # find the time and target slice of each RF pulse
     timings_with_repeats, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
-    print(' ')
     # define proton positions over time
     if X_given is None:
         tstart_pos = time.time()
@@ -81,7 +92,7 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         X = compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
         
         # trim initialized protons that don't touch slices
-        print(f"trimming protons that never touch slices")
+        logger.info(f"trimming protons that never touch slices")
         def does_x_touch_slices(x):
             return ((x < w*nslice) & (x > 0)).any()
         proton_to_remove = []
@@ -89,18 +100,17 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
             if not does_x_touch_slices(X[iproton, :]):
                 proton_to_remove.append(iproton)
         X = np.delete(X, proton_to_remove, axis=0)
-        print(f"found {len(proton_to_remove)} protons to be trimmed")
-        print(f"trimmed upper bound: {X[-1, 0]} cm")
-        print(f"trimmed lower bound: {X[0, 0]} cm")
+        logger.info(f"found {len(proton_to_remove)} protons to be trimmed")
+        logger.info(f"trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
         
-        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5)
-        print(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
+        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, enable_logging=enable_logging)
+        logger.info(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given)
-        print('using given proton positions. Skipping calculation...')
+        logger.info('using given proton positions. Skipping calculation...')
     
     nproton = X.shape[0]
-    print('running simulation with ' + str(nproton) + ' protons...')
+    logger.info('running simulation with ' + str(nproton) + ' protons...')
 
     # match pulses to their RF cycles
     pulse_tr_actual = match_pulse_to_tr(npulse, nslice)
@@ -122,7 +132,7 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         num_usable_cpu = len(os.sched_getaffinity(0))
         optimal_chunksize = int(nproton / (num_usable_cpu * 4))
         
-        print(f"using {num_usable_cpu} cpu cores")
+        logger.info(f"using {num_usable_cpu} cpu cores")
         with Pool() as pool:
             result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
         
@@ -137,12 +147,11 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
                 Nmatrix += N
             
     else:
-        print(f"using 1 cpu core")
+        logger.info(f"using 1 cpu core")
         for iproton in range(nproton):
             signal += compute_proton_signal_contribution(iproton, params[iproton])
                 
-    print(f'total simulation time: {time.time() - tstart_sim:.2f} seconds')
-    print(' ')
+    logger.info(f'total simulation time: {time.time() - tstart_sim:.2f} seconds')
     
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
     signal /= num_proton_in_slice
@@ -192,30 +201,36 @@ def compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
     return X
 
 
-def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1, maxiter=200):
-    
+def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1, maxiter=200, enable_logging=False):
+    # set up logging configuration
+    if enable_logging:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.disable(logging.CRITICAL)  # Disable all logging
+    logger = logging.getLogger(__name__)
+        
     # increase density until no proton count is below the minimum allowance
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
     ind_sparse = np.where(num_proton_in_slice < min_proton_count)
     if ind_sparse[0].size > 0:
-        print(f"initial proton count is {X.shape[0]}")
-        print(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons")
-        print(f"running density increase algorithm...")
+        logger.info(f"initial proton count is {X.shape[0]}")
+        logger.info(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons")
+        logger.info(f"running density increase algorithm...")
         count = 0
         while ind_sparse[0].size > 0:
             count += 1
             if count > maxiter:
-                print(f"WARNING: reached max count iter of {maxiter}")
-                print(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
-                print(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+                logger.info(f"WARNING: reached max count iter of {maxiter}")
+                logger.info(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
+                logger.info(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
                 return X
             thres = w / min_proton_count # threshold distance between adjacent position curves for increasing proton density
             X = increase_position_matrix_density(X, thres) 
             num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
             ind_sparse = np.where(num_proton_in_slice < min_proton_count)
-        print(f"finished after {count} iterations")
-        print(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
-        print(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+        logger.info(f"finished after {count} iterations")
+        logger.info(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
+        logger.info(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
 
     return X
 
@@ -280,8 +295,6 @@ def get_init_position_bounds(x_func, timings, w, nslice):
     # place buffers on bounds just to be sure
     upper_bound *= 1.5
     lower_bound *= 1.5
-    print(f"initial upper bound: {upper_bound} cm")
-    print(f"initial lower bound: {lower_bound} cm")
     
     return lower_bound, upper_bound
 
