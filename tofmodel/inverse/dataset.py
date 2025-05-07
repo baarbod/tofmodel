@@ -3,31 +3,47 @@
 from multiprocessing import Pool
 import multiprocessing.shared_memory as msm
 from functools import partial
+from omegaconf import OmegaConf
 import time
 import numpy as np
 import pickle
 import os
 import shutil
-import argparse
-from omegaconf import OmegaConf
+import logging
+import multiprocessing
+import sys
 
 import tofmodel.inverse.utils as utils
 import tofmodel.inverse.io as io
 from tofmodel.forward import posfunclib as pfl
 from tofmodel.forward import simulate as tm
-from tofmodel.path import ROOT_DIR
 
 
-def prepare_simulation_inputs(param, dirs, task_id):
+# Set up basic logging configuration
+logging.basicConfig(level=logging.INFO)
+
+
+def setup_worker_logger(log_level=logging.INFO):
+    logger = multiprocessing.get_logger()
+    handler = logging.StreamHandler(sys.stdout)
+    formatter = logging.Formatter('[%(processName)s] %(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(log_level)
     
-    batch_size = param.data_simulation.num_samples // param.data_simulation.num_batches
-    print(f"running for batch size {batch_size}")
+    
+def prepare_inputs(param, dirs, task_id):
     
     # generate inputs for all samples in the dataset
+    batch_size = param.data_simulation.num_samples // param.data_simulation.num_batches
     input_data = define_input_params(batch_size, param, task_id)
 
+    # determine number of workers based on batch_size and available CPU cores
+    num_usable_cpu = len(os.sched_getaffinity(0))
+    num_workers = min(batch_size, num_usable_cpu) 
+
     # for compute number of protons for every sample
-    with Pool() as pool:
+    with Pool(processes=num_workers, initializer=setup_worker_logger) as pool:
         X0_list = pool.starmap(compute_sample_init_positions, enumerate(input_data))    
     
     inputs = [{'input_data': input_data[i], 'x0_array': X0_list[i]} for i in range(len(input_data))]
@@ -37,8 +53,9 @@ def prepare_simulation_inputs(param, dirs, task_id):
         pickle.dump(inputs, f)
     
 
-def sort_simulation_inputs(param, dirs):
-
+def sort_inputs(param, dirs):
+    logger = logging.getLogger(__name__)
+    
     inputs_all_samples = []
     nproton_list = []
 
@@ -66,7 +83,7 @@ def sort_simulation_inputs(param, dirs):
     for idx, chunk in enumerate(chunks):
         override_task_id = idx + 1
         inputs_path = os.path.join(dirs['sorted'], f"inputs_list_{len(chunk)}_samples_task{override_task_id:03}.pkl")
-        print(f"saved to {inputs_path}")
+        logger.info(f"saved to {inputs_path}")
         with open(inputs_path, "wb") as f:
             pickle.dump(chunk, f)  
  
@@ -185,14 +202,18 @@ def compute_sample_init_positions(isample, sample_input_data):
     npulse += npulse_offset
     dx = 0.01
     timings, _ = tm.get_pulse_targets(tr, nslice, npulse, alpha)
-    print(f"running initial position loop...")
+    logger = multiprocessing.get_logger()
+    logger.info(f"running initial position loop...")
     lower_bound, upper_bound = tm.get_init_position_bounds(x_func_area, np.unique(timings), w, nslice)
+    logger.info(f"initial position bounds: ({lower_bound:.3f}, {upper_bound:.3f}) cm")
     x0_array = np.arange(lower_bound, upper_bound + dx, dx)
 
     return x0_array
 
 
 def simulate_parameter_set(idx, input_data):
+    
+    t0 = time.time()
     
     # unpack tuple of inputs
     frequencies, v_offset, rand_phase, velocity_input, \
@@ -260,8 +281,10 @@ def simulate_parameter_set(idx, input_data):
     
     Y[idx, 0, :] = v_downsample
     
+    t1 = time.time()
+    return (t0, t1)
     
-def run_simulation(param, dirs, task_id):
+def run_simulations(param, dirs, task_id):
     
     # find the correct input data batch based on the task_id
     for file in os.listdir(dirs['sorted']):
@@ -270,12 +293,10 @@ def run_simulation(param, dirs, task_id):
             with open(inputs_path, 'rb') as f:
                 input_data_batch = pickle.load(f)
     
-    print(f"loaded {inputs_path}")
+    logger = logging.getLogger(__name__)
+    logger.info(f"loaded {inputs_path}")
     
-    # mark start time
-    tstart = time.time()
-
-    # override array shapes based on actual dimensions
+    # override array shapes based on actual dimensions (this renumbers things if missing certain files)
     batch_size = len(input_data_batch)
     Xshape = (batch_size, param.data_simulation.num_input_features, param.data_simulation.input_feature_size)
     Yshape = (batch_size, param.data_simulation.num_output_features, param.data_simulation.output_feature_size)
@@ -289,42 +310,51 @@ def run_simulation(param, dirs, task_id):
     X_shared = utils.create_shared_memory(X, name=f"Xarray{task_id}")
     Y_shared = utils.create_shared_memory(Y, name=f"Yarray{task_id}")
 
+    # determine number of workers based on batch_size and available CPU cores
+    num_usable_cpu = len(os.sched_getaffinity(0))
+    num_workers = min(batch_size, num_usable_cpu) 
+
     # call pool pointing to simulation routine
-    with Pool(processes=len(os.sched_getaffinity(0))) as pool:
-        print(f"running process with {os.cpu_count()} cpu cores ({len(os.sched_getaffinity(0))} usable)")
-        pool.starmap(simulate_parameter_set, enumerate(input_data_batch))
+    with Pool(processes=num_workers, initializer=setup_worker_logger) as pool:
+        times = pool.starmap(simulate_parameter_set, enumerate(input_data_batch))
 
     # define the numpy arrays to save
     x = np.ndarray(X.shape, dtype=X.dtype, buffer=X_shared.buf)
     y = np.ndarray(Y.shape, dtype=Y.dtype, buffer=Y_shared.buf)
 
-    # mark end time
-    tfinal = time.time()
-    tstr = '{:3.2f}'.format(tfinal - tstart)
-    print(f"total simulation time = {tstr}")
-    print(f"total number of samples = {x.shape[0]}")
-
+    start_times, end_times = zip(*times)
+    start_times = np.array(start_times)
+    end_times = np.array(end_times)
+    tref = np.min(start_times)
+    start_times -= tref
+    end_times -= tref
+    logger.info(f"summary of timing (relative to start of first simulation) across {len(times)} simulations")
+    for idx, (tstart, tend) in enumerate(zip(start_times, end_times)):
+        logger.info(f"  simulation: {idx}, start time :{tstart:.3f} seconds, total simulation time: {(tend - tstart):.3f} seconds")
+    total_times = end_times - start_times
+    mn, sd = np.mean(total_times), np.std(total_times)
+    logger.info(f"Mean simulation time: {mn:.3f} +- {sd:.3f}")
+    
     # log simulation experiment information
     config_path = os.path.join(dirs['sim_batched'], 'config_used.yml')
     OmegaConf.save(config=OmegaConf.create(param), f=config_path)
     
     # save training data simulation information
     output_path = os.path.join(dirs['sim_batched'], f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
-    print('Saving updated training_data set...')   
+    logger.info('Saving updated training_data set...')
     with open(output_path, "wb") as f:
         pickle.dump([x, y, input_data_batch], f)
-    print('Finished saving.')   
+    logger.info('Finished saving.')
 
     # close shared memory
     utils.close_shared_memory(name=X_shared.name)
     utils.close_shared_memory(name=Y_shared.name)
 
 
-def combine_simulated_batches(param, dirs):
-
-    dataset_name = param.info.name
-    dataset_root = os.path.join(ROOT_DIR, 'data', 'simulated')
-    folder = os.path.join(dataset_root, dataset_name)
+def combine_simulations(param, dirs):
+    logger = logging.getLogger(__name__)
+    
+    outdir = param.paths.outdir
     x_list = []
     y_list = []
     inputs_list = []
@@ -338,11 +368,11 @@ def combine_simulated_batches(param, dirs):
                 x_list.append(x)
                 y_list.append(y)
                 inputs_list +=  input_data_batch
-                print(f"combined and NOT removed {file}")
-                # os.remove(filepath)
+                logger.info(f"combined and removed {file}")
+                os.remove(filepath)
         if file.endswith('_used.yml') and not config_flag:
             filepath = os.path.join(dirs['sim_batched'], file)
-            shutil.move(filepath, folder)
+            shutil.move(filepath, outdir)
             config_flag = 1
 
     x = np.concatenate(x_list, axis=0)    
@@ -350,87 +380,21 @@ def combine_simulated_batches(param, dirs):
 
     # save training data simulation information
     filename = f"output_{y.shape[0]}_samples.pkl"
-    filepath = os.path.join(folder, filename)
-    print('Saving updated training_data set...')   
+    filepath = os.path.join(outdir, filename)
+    logger.info('Saving updated training_data set...')   
     with open(filepath, "wb") as f:
         pickle.dump([x, y, inputs_list], f)
-    print('Finished saving.')   
+    logger.info('Finished saving.')   
 
 
 def cleanup_directories(dirs):
+    logger = logging.getLogger(__name__)
     
     shutil.rmtree(dirs['batched'])
-    print(f"temporary inputs batched directory {dirs['batched']} removed succesfully")
-
+    logger.info(f"temporary inputs batched directory {dirs['batched']} removed succesfully")
+    
     shutil.rmtree(dirs['full'])
-    print(f"temporary all inputs directory {dirs['full']} removed succesfully")
+    logger.info(f"temporary all inputs directory {dirs['full']} removed succesfully")
     
     shutil.rmtree(dirs['sim_batched'])
-    print(f"temporary simulated batched directory {dirs['sim_batched']} removed succesfully")
-    
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Run dataset simulations and preprocessing batches"
-    )
-    parser.add_argument("task_id", type=int, help="Batch/task ID (1-based)")
-    parser.add_argument("config_file", type=str, help="Config JSON filename under ROOT_DIR/config")
-    parser.add_argument("action", type=str,
-                        choices=[
-                            "prepare_simulation_inputs", "sort_simulation_inputs",
-                            "run_simulation", "combine_simulated_batches"
-                        ], help="Operation to perform")
-    return parser.parse_args()
-
-
-def load_config(path):
-    return OmegaConf.load(path)
-
-
-def setup_directories(dataset_name):
-    dataset_root = os.path.join(ROOT_DIR, 'data', 'simulated')
-    base = os.path.join(dataset_root, dataset_name)
-    dirs = {
-        'batched': os.path.join(base, 'inputs_batched'),
-        'full': os.path.join(base, 'inputs_all'),
-        'sorted': os.path.join(base, 'inputs_all_sorted'),
-        'sim_batched': os.path.join(base, 'simulated_batched')
-    }
-    for d in dirs.values():
-        os.makedirs(d, exist_ok=True)
-    return dirs
-
-
-def main():
-    args = parse_args()
-    param = load_config(args.config_file)
-    
-    # override some parameters
-    param.scan_param.num_pulse = param.data_simulation.input_feature_size
-    param.scan_param.num_pulse_baseline_offset = 20
-    
-    dirs = setup_directories(param.info.name)
-    action = args.action
-    
-    if action == 'prepare_simulation_inputs':
-        nbatch = param.data_simulation.num_batches
-        print(f"on task {args.task_id} of {nbatch}")
-        prepare_simulation_inputs(param, dirs, args.task_id)
-        
-    elif action == 'sort_simulation_inputs':
-        sort_simulation_inputs(param, dirs)
-        
-    elif action == 'run_simulation':
-        run_simulation(param, dirs, args.task_id)
-        
-    elif action == 'combine_simulated_batches':
-        combine_simulated_batches(param, dirs)
-        
-    elif action == 'cleanup_directories':
-        cleanup_directories(dirs)
-        
-    else:
-        raise ValueError(f"Unknown action: {action}")
-
-if __name__ == '__main__':
-    main()
+    logger.info(f"temporary simulated batched directory {dirs['sim_batched']} removed succesfully")
