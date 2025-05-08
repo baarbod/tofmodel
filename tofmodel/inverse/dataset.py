@@ -24,6 +24,14 @@ logging.basicConfig(level=logging.INFO)
 
 
 def setup_worker_logger(log_level=logging.INFO):
+    """Initialize logger for worker processes to log to stdout.
+
+    Parameters
+    ----------
+    log_level : int
+        Logging verbosity level (e.g., logging.INFO).
+    """
+    
     logger = multiprocessing.get_logger()
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter('[%(processName)s] %(asctime)s - %(levelname)s - %(message)s')
@@ -34,6 +42,19 @@ def setup_worker_logger(log_level=logging.INFO):
     
     
 def prepare_inputs(param, dirs, task_id):
+    """Generate and save simulation input samples with initial proton positions.
+
+    Parameters
+    ----------
+    param : OmegaConf
+        Configuration with simulation and sampling parameters.
+    
+    dirs : dict
+        Dictionary containing paths for storing intermediate files.
+
+    task_id : int
+        ID number for this task/batch.
+    """
     
     # generate inputs for all samples in the dataset
     batch_size = param.data_simulation.num_samples // param.data_simulation.num_batches
@@ -55,6 +76,17 @@ def prepare_inputs(param, dirs, task_id):
     
 
 def sort_inputs(param, dirs):
+    """Load all input batches, sort them by proton count, and redistribute into sorted batches.
+
+    Parameters
+    ----------
+    param : OmegaConf
+        Simulation configuration.
+
+    dirs : dict
+        Directory paths containing batched and sorted inputs.
+    """
+    
     logger = logging.getLogger(__name__)
     
     inputs_all_samples = []
@@ -90,7 +122,22 @@ def sort_inputs(param, dirs):
  
  
 def get_sampling_bounds(param, frequencies):
+    """Compute lower and upper bounds for velocity amplitude sampling using Gaussians.
 
+    Parameters
+    ----------
+    param : OmegaConf
+        Sampling configuration parameters.
+    
+    frequencies : numpy.ndarray
+        Array of frequency values.
+
+    Returns
+    -------
+    bounds : numpy.ndarray
+        Array of shape (len(frequencies), 2) with lower and upper bounds.
+    """
+    
     sampling_param = param.sampling
     bounding_gaussians = sampling_param.bounding_gaussians
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2) # gaussian
@@ -119,6 +166,25 @@ def get_sampling_bounds(param, frequencies):
 
 
 def define_input_params(num_sample, param, task_id):
+    """Generate randomized input parameter dictionaries for simulation.
+
+    Parameters
+    ----------
+    num_sample : int
+        Number of samples to generate.
+    
+    param : OmegaConf
+        Configuration parameters for sampling and simulation.
+    
+    task_id : int
+        Task identifier for this batch.
+
+    Returns
+    -------
+    input_data : list of dict
+        List of dictionaries with simulation parameters per sample.
+    """
+    
     input_data = []
 
     sampling_param = param.sampling
@@ -185,7 +251,22 @@ def define_input_params(num_sample, param, task_id):
 
 
 def compute_sample_init_positions(isample, input_data):
-        
+    """Compute initial spatial positions for protons based on velocity and area profile.
+
+    Parameters
+    ----------
+    isample : int
+        Dummy argument needed for enumerate to work when passing to Pool call.
+
+    input_data : dict
+        Dictionary of parameters for the sample.
+
+    Returns
+    -------
+    x0_array : numpy.ndarray
+        Array of initial proton positions (in cm).
+    """
+    
     # unpack dict of inputs
     frequencies = input_data['frequencies']
     v_offset = input_data['v_offset']
@@ -228,6 +309,21 @@ def compute_sample_init_positions(isample, input_data):
 
 
 def simulate_parameter_set(isample, inputs):
+    """Simulate inflow signal for one sample using its parameter set and write to shared memory array.
+
+    Parameters
+    ----------
+    isample : int
+        Sample index in the batch used for indexing into shared memory arrays.
+
+    inputs : dict
+        Contains 'input_data' and other metadata.
+
+    Returns
+    -------
+    t0, t1 : float
+        Start and end times of the simulation used for reporting.
+    """
     
     t0 = time.time()
     
@@ -312,6 +408,20 @@ def simulate_parameter_set(isample, inputs):
 
 
 def run_simulations(param, dirs, task_id):
+    """Run simulations for a task batch and saved the resulting filled shared memory arrays.
+
+    Parameters
+    ----------
+    param : OmegaConf
+        Configuration parameters for simulation.
+    
+    dirs : dict
+        Dictionary of directory paths for input/output.
+
+    task_id : int
+        Task number to identify which input batch to run.
+    """
+    
     logger = logging.getLogger(__name__)
     
     # find the correct input data batch based on the task_id
@@ -386,6 +496,17 @@ def run_simulations(param, dirs, task_id):
 
 
 def combine_simulations(param, dirs):
+    """Combine all simulated batches into one dataset and save to output directory.
+
+    Parameters
+    ----------
+    param : OmegaConf
+        Configuration with path to final output directory.
+    
+    dirs : dict
+        Directory paths containing simulation results.
+    """
+    
     logger = logging.getLogger(__name__)
     
     outdir = param.paths.outdir
@@ -431,6 +552,14 @@ def combine_simulations(param, dirs):
 
 
 def cleanup_directories(dirs):
+    """Remove temporary directories used during simulation.
+
+    Parameters
+    ----------
+    dirs : dict
+        Dictionary of directory paths to remove.
+    """
+    
     logger = logging.getLogger(__name__)
     
     shutil.rmtree(dirs['batched'])
