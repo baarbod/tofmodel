@@ -28,7 +28,8 @@ def setup_worker_logger(log_level=logging.INFO):
     handler = logging.StreamHandler(sys.stdout)
     formatter = logging.Formatter('[%(processName)s] %(asctime)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    if not logger.handlers:
+        logger.addHandler(handler)
     logger.setLevel(log_level)
     
     
@@ -36,7 +37,7 @@ def prepare_inputs(param, dirs, task_id):
     
     # generate inputs for all samples in the dataset
     batch_size = param.data_simulation.num_samples // param.data_simulation.num_batches
-    input_data = define_input_params(batch_size, param, task_id)
+    input_data_batch = define_input_params(batch_size, param, task_id)
 
     # determine number of workers based on batch_size and available CPU cores
     num_usable_cpu = len(os.sched_getaffinity(0))
@@ -44,9 +45,9 @@ def prepare_inputs(param, dirs, task_id):
 
     # for compute number of protons for every sample
     with Pool(processes=num_workers, initializer=setup_worker_logger) as pool:
-        X0_list = pool.starmap(compute_sample_init_positions, enumerate(input_data))    
+        x0_list = pool.starmap(compute_sample_init_positions, enumerate(input_data_batch))    
     
-    inputs = [{'input_data': input_data[i], 'x0_array': X0_list[i]} for i in range(len(input_data))]
+    inputs = [{'input_data': input_data_batch[i], 'x0_array': x0_list[i]} for i in range(len(input_data_batch))]
     
     inputs_path = os.path.join(dirs['batched'], f"inputs_list_{len(inputs)}_samples_task{task_id:03}.pkl")
     with open(inputs_path, "wb") as f:
@@ -162,22 +163,37 @@ def define_input_params(num_sample, param, task_id):
         Yshape = (batch_size, simulation_param.num_output_features, simulation_param.output_feature_size)
         Xtype = simulation_param.Xtype
         Ytype = simulation_param.Ytype
+        
         # store all variables
-        input_data.append([tuple(frequencies), v_offset, rand_phase, tuple(rand_numbers), 
-                                scan_param, Xshape, Xtype, Yshape, Ytype, task_id, 
-                                xarea_sample, area_sample, gauss_noise_std])
+        input_data.append({
+            'frequencies': tuple(frequencies),
+            'v_offset': v_offset,
+            'rand_phase': rand_phase,
+            'velocity_input': tuple(rand_numbers),
+            'scan_param': scan_param,
+            'Xshape': Xshape,
+            'Xtype': Xtype,
+            'Yshape': Yshape,
+            'Ytype': Ytype,
+            'task_id': task_id,
+            'xarea_sample': xarea_sample,
+            'area_sample': area_sample,
+            'gauss_noise_std': gauss_noise_std
+        })
 
     return input_data
 
 
-def compute_sample_init_positions(isample, sample_input_data):
-    
-    # sample_input_data = input_data[isample]
-    
-    # unpack tuple of inputs
-    frequencies, v_offset, rand_phase, velocity_input, \
-    scan_param, Xshape, Xtype, Yshape, Ytype, task_id, \
-    xarea_sample, area_sample, gauss_noise_std = sample_input_data
+def compute_sample_init_positions(isample, input_data):
+        
+    # unpack dict of inputs
+    frequencies = input_data['frequencies']
+    v_offset = input_data['v_offset']
+    rand_phase = input_data['rand_phase']
+    velocity_input = input_data['velocity_input']
+    scan_param = input_data['scan_param']
+    xarea_sample = input_data['xarea_sample']
+    area_sample = input_data['area_sample']
     
     tr = scan_param.repetition_time
     w = scan_param.slice_width
@@ -211,14 +227,24 @@ def compute_sample_init_positions(isample, sample_input_data):
     return x0_array
 
 
-def simulate_parameter_set(idx, input_data):
+def simulate_parameter_set(isample, inputs):
     
     t0 = time.time()
     
-    # unpack tuple of inputs
-    frequencies, v_offset, rand_phase, velocity_input, \
-    scan_param, Xshape, Xtype, Yshape, Ytype, task_id, \
-    xarea_sample, area_sample, gauss_noise_std = input_data['input_data']
+    # unpack dict of inputs
+    frequencies = inputs['input_data']['frequencies']
+    v_offset = inputs['input_data']['v_offset']
+    rand_phase = inputs['input_data']['rand_phase']
+    velocity_input = inputs['input_data']['velocity_input']
+    scan_param = inputs['input_data']['scan_param']
+    Xshape = inputs['input_data']['Xshape']
+    Xtype = inputs['input_data']['Xtype']
+    Yshape = inputs['input_data']['Yshape']
+    Ytype = inputs['input_data']['Ytype']
+    task_id = inputs['input_data']['task_id']
+    xarea_sample = inputs['input_data']['xarea_sample']
+    area_sample = inputs['input_data']['area_sample']
+    gauss_noise_std = inputs['input_data']['gauss_noise_std']
         
     # scan parameters
     tr = scan_param.repetition_time
@@ -271,39 +297,47 @@ def simulate_parameter_set(idx, input_data):
     s += noise
 
     # fill matricies
-    X[idx, 0, :] = s[:, 0].squeeze()
-    X[idx, 1, :] = s[:, 1].squeeze()
-    X[idx, 2, :] = s[:, 2].squeeze()
-    X[idx, 3, :] = xarea_sample
-    X[idx, 4, :] = area_sample
+    X[isample, 0, :] = s[:, 0].squeeze()
+    X[isample, 1, :] = s[:, 1].squeeze()
+    X[isample, 2, :] = s[:, 2].squeeze()
+    X[isample, 3, :] = xarea_sample
+    X[isample, 4, :] = area_sample
     
     v_downsample = utils.downsample(v, Yshape[2])
     
-    Y[idx, 0, :] = v_downsample
+    Y[isample, 0, :] = v_downsample
     
     t1 = time.time()
     return (t0, t1)
-    
+
+
 def run_simulations(param, dirs, task_id):
+    logger = logging.getLogger(__name__)
     
     # find the correct input data batch based on the task_id
+    input_file = None
     for file in os.listdir(dirs['sorted']):
         if f"task{task_id:03}.pkl" in file:
-            inputs_path = os.path.join(dirs['sorted'], file)
-            with open(inputs_path, 'rb') as f:
-                input_data_batch = pickle.load(f)
+            input_file = os.path.join(dirs['sorted'], file)
     
-    logger = logging.getLogger(__name__)
-    logger.info(f"loaded {inputs_path}")
+    if input_file is None:
+        logger.error(f"No file found for task ID {task_id}")
+        return
+
+    # Load the input data batch
+    with open(input_file, 'rb') as f:
+        inputs_batch = pickle.load(f)
+    logger.info(f"loaded {input_file}")
     
-    # override array shapes based on actual dimensions (this renumbers things if missing certain files)
-    batch_size = len(input_data_batch)
+    batch_size = len(inputs_batch)
     Xshape = (batch_size, param.data_simulation.num_input_features, param.data_simulation.input_feature_size)
     Yshape = (batch_size, param.data_simulation.num_output_features, param.data_simulation.output_feature_size)
-    for i in range(len(input_data_batch)):
-        input_data_batch[i]['input_data'][9] = task_id
-        input_data_batch[i]['input_data'][5] = Xshape
-        input_data_batch[i]['input_data'][7] = Yshape
+    for i in range(len(inputs_batch)):
+        # renumber task_i, after having sorted the batches
+        inputs_batch[i]['input_data']['task_id'] = task_id 
+        # ensure dimensions are correct as well
+        inputs_batch[i]['input_data']['Xshape'] = Xshape
+        inputs_batch[i]['input_data']['Yshape'] = Yshape
 
     X = np.zeros(Xshape)
     Y = np.zeros(Yshape)
@@ -316,7 +350,7 @@ def run_simulations(param, dirs, task_id):
 
     # call pool pointing to simulation routine
     with Pool(processes=num_workers, initializer=setup_worker_logger) as pool:
-        times = pool.starmap(simulate_parameter_set, enumerate(input_data_batch))
+        times = pool.starmap(simulate_parameter_set, enumerate(inputs_batch))
 
     # define the numpy arrays to save
     x = np.ndarray(X.shape, dtype=X.dtype, buffer=X_shared.buf)
@@ -343,7 +377,7 @@ def run_simulations(param, dirs, task_id):
     output_path = os.path.join(dirs['sim_batched'], f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
     logger.info('Saving updated training_data set...')
     with open(output_path, "wb") as f:
-        pickle.dump([x, y, input_data_batch], f)
+        pickle.dump([x, y, inputs_batch], f)
     logger.info('Finished saving.')
 
     # close shared memory
@@ -359,42 +393,54 @@ def combine_simulations(param, dirs):
     y_list = []
     inputs_list = []
     config_flag = 0
-    for file in os.listdir(dirs['sim_batched']):
-        if file.endswith('.pkl'):
-            filepath = os.path.join(dirs['sim_batched'], file)
-            if os.path.isfile(filepath):
-                with open(filepath, "rb") as f:
-                    x, y, input_data_batch = pickle.load(f)
-                x_list.append(x)
-                y_list.append(y)
-                inputs_list +=  input_data_batch
-                logger.info(f"combined and removed {file}")
-                os.remove(filepath)
-        if file.endswith('_used.yml') and not config_flag:
-            filepath = os.path.join(dirs['sim_batched'], file)
-            shutil.move(filepath, outdir)
-            config_flag = 1
+    sim_files = os.listdir(dirs['sim_batched'])
+    
+    if not sim_files:
+        logger.warning(f"No files found in {dirs['sim_batched']}. Exiting.")
+    else:
+        for file in sim_files:
+            if file.endswith('.pkl'):
+                filepath = os.path.join(dirs['sim_batched'], file)
+                if os.path.isfile(filepath):
+                    with open(filepath, "rb") as f:
+                        x, y, input_data_batch = pickle.load(f)
+                    x_list.append(x)
+                    y_list.append(y)
+                    inputs_list += input_data_batch
+                    logger.info(f"combined and removed {file}")
+                    os.remove(filepath)
+            if file.endswith('_used.yml') and not config_flag:
+                filepath = os.path.join(dirs['sim_batched'], file)
+                shutil.move(filepath, outdir)
+                config_flag = 1
 
-    x = np.concatenate(x_list, axis=0)    
-    y = np.concatenate(y_list, axis=0)
+    if x_list and y_list:
+        x = np.concatenate(x_list, axis=0)    
+        y = np.concatenate(y_list, axis=0)
 
-    # save training data simulation information
-    filename = f"output_{y.shape[0]}_samples.pkl"
-    filepath = os.path.join(outdir, filename)
-    logger.info('Saving updated training_data set...')   
-    with open(filepath, "wb") as f:
-        pickle.dump([x, y, inputs_list], f)
-    logger.info('Finished saving.')   
+        # save training data simulation information
+        filename = f"output_{y.shape[0]}_samples.pkl"
+        filepath = os.path.join(outdir, filename)
+        logger.info(f'Combined {len(x_list)} samples')   
+        logger.info('Saving updated training_data set...')   
+        with open(filepath, "wb") as f:
+            pickle.dump([x, y, inputs_list], f)
+        logger.info('Finished saving.')   
+    else:
+        logger.warning("No valid .pkl files processed. Nothing to save.")
 
 
 def cleanup_directories(dirs):
     logger = logging.getLogger(__name__)
     
     shutil.rmtree(dirs['batched'])
-    logger.info(f"temporary inputs batched directory {dirs['batched']} removed succesfully")
+    logger.info(f"Successfully removed directory: {dirs['batched']}")
     
     shutil.rmtree(dirs['full'])
-    logger.info(f"temporary all inputs directory {dirs['full']} removed succesfully")
+    logger.info(f"Successfully removed directory: {dirs['full']}")
+
+    shutil.rmtree(dirs['sorted'])
+    logger.info(f"Successfully removed directory: {dirs['full']}")
     
     shutil.rmtree(dirs['sim_batched'])
-    logger.info(f"temporary simulated batched directory {dirs['sim_batched']} removed succesfully")
+    logger.info(f"Successfully removed directory: {dirs['sim_batched']}")
