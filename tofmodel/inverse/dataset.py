@@ -4,6 +4,7 @@ from multiprocessing import Pool
 import multiprocessing.shared_memory as msm
 from functools import partial
 from omegaconf import OmegaConf
+from scipy.interpolate import interp1d
 import time
 import numpy as np
 import pickle
@@ -14,13 +15,12 @@ import multiprocessing
 import sys
 
 import tofmodel.inverse.utils as utils
-import tofmodel.inverse.io as io
 from tofmodel.forward import posfunclib as pfl
 from tofmodel.forward import simulate as tm
 
 
 # Set up basic logging configuration
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 
 def setup_worker_logger(log_level=logging.INFO):
@@ -106,7 +106,7 @@ def sort_inputs(param, dirs):
         pickle.dump(inputs_all_samples, f)
 
     # sort dataset by nproton
-    sort_indices = np.argsort(nproton_list)
+    sort_indices = np.argsort(nproton_list)[::-1]
     inputs_all_samples_sorted = [inputs_all_samples[i] for i in sort_indices]
         
     # distribute sorted full dataset into nbatch batches
@@ -185,16 +185,57 @@ def define_input_params(num_sample, param, task_id):
         List of dictionaries with simulation parameters per sample.
     """
     
+    logger = logging.getLogger(__name__)
+    
     input_data = []
 
     sampling_param = param.sampling
     simulation_param = param.data_simulation
     scan_param = param.scan_param
-    frequencies = np.arange(simulation_param.frequency_start, simulation_param.frequency_end, simulation_param.frequency_spacing)
     
-    # load subject area information
-    config_data_path = '/om/user/bashen/repositories/tofmodel/config/config_data.json'
-    Ax, Ay, subjects = io.load_subject_area_matrix(config_data_path, simulation_param.input_feature_size)
+    def define_sample_area(sampling_param, input_feature_size):
+        area_param = sampling_param.cross_sectional_area
+        
+        if area_param.mode == 'straight_tube':
+            xarea_sample, area_sample = np.linspace(-3, 3, 1000), np.ones(1000)
+        
+        elif area_param.mode == 'custom':
+            path_to_custom = area_param.path_to_custom
+            area_data = np.loadtxt(path_to_custom) # placeholder
+            xarea_sample, area_sample = area_data[:, 0], area_data[:, 1]
+            
+        elif area_param.mode == 'collection':
+            path_to_collection = area_param.path_to_collection
+            area_files = sorted(os.listdir(path_to_collection))
+            if not area_files:
+                logger.error(f"No area files found in {path_to_collection}")
+                raise FileNotFoundError(f"No valid area files in {path_to_collection}")
+            selected_area_file = np.random.choice(area_files)
+            selected_area_path = os.path.join(path_to_collection, selected_area_file)
+            area_data = np.loadtxt(selected_area_path)
+            xarea, area = area_data[:, 0], area_data[:, 1]
+                       
+            area_scale_factor = np.random.uniform(low=area_param.area_scale_lower, 
+                                                    high=area_param.area_scale_upper)
+            slc1_offset = np.random.uniform(low=area_param.slc1_offset_lower, 
+                                            high=area_param.slc1_offset_upper)
+
+            widest_position = xarea[np.argmax(area)]
+            xarea_sample = xarea - widest_position - slc1_offset
+            area_sample = area_scale_factor * area
+
+        # ensure area dimensions are correct        
+        def resample(x, y, n):
+            f = interp1d(x, y, kind='linear', fill_value='extrapolate')
+            x_new = np.linspace(x.min(), x.max(), n)
+            return x_new, f(x_new)
+
+        xarea_sample_resampled, area_sample_resampled = resample(xarea_sample, area_sample, input_feature_size)
+
+        return xarea_sample_resampled, area_sample_resampled
+    
+    
+    frequencies = np.arange(simulation_param.frequency_start, simulation_param.frequency_end, simulation_param.frequency_spacing)
     
     # random sampling constrained by lower and upper bounds
     for _ in range(num_sample):
@@ -213,16 +254,7 @@ def define_input_params(num_sample, param, task_id):
                                             high=sampling_param.gauss_noise_upper)
         
         # define cross-sectional area
-        area_subject_ind = np.random.randint(len(subjects) - 1) # subtract one to not include straight tube
-        area_scale_factor = np.random.uniform(low=sampling_param.area_scale_lower, 
-                                                high=sampling_param.area_scale_upper)
-        slc1_offset = np.random.uniform(low=sampling_param.slc1_offset_lower, 
-                                        high=sampling_param.slc1_offset_upper)
-        xarea = Ax[:, area_subject_ind]
-        area = Ay[:, area_subject_ind]
-        widest_position = xarea[np.argmax(area)]
-        xarea_sample = xarea - widest_position - slc1_offset
-        area_sample = area_scale_factor * area
+        xarea_sample, area_sample = define_sample_area(sampling_param, simulation_param.input_feature_size)
             
         batch_size = simulation_param.num_samples // simulation_param.num_batches
         Xshape = (batch_size, simulation_param.num_input_features, simulation_param.input_feature_size)
@@ -384,13 +416,12 @@ def simulate_parameter_set(isample, inputs):
     s_raw = s_raw[npulse_offset:, :]
     
     # preprocess raw simulated signal 
-    s = utils.scale_epi(s_raw)
-    s -= np.mean(s, axis=0)
+    s = np.array(s_raw)
     
     # Add zero-mean gaussian noise
     mean = 0
     noise = np.random.normal(mean, gauss_noise_std, (Xshape[2], 3))
-    s += noise
+    s = s_raw + noise
 
     # fill matricies
     X[isample, 0, :] = s[:, 0].squeeze()
@@ -509,7 +540,7 @@ def combine_simulations(param, dirs):
     
     logger = logging.getLogger(__name__)
     
-    outdir = param.paths.outdir
+    datasetdir = param.paths.datasetdir
     x_list = []
     y_list = []
     inputs_list = []
@@ -532,7 +563,7 @@ def combine_simulations(param, dirs):
                     os.remove(filepath)
             if file.endswith('_used.yml') and not config_flag:
                 filepath = os.path.join(dirs['sim_batched'], file)
-                shutil.move(filepath, outdir)
+                shutil.move(filepath, datasetdir)
                 config_flag = 1
 
     if x_list and y_list:
@@ -541,7 +572,7 @@ def combine_simulations(param, dirs):
 
         # save training data simulation information
         filename = f"output_{y.shape[0]}_samples.pkl"
-        filepath = os.path.join(outdir, filename)
+        filepath = os.path.join(datasetdir, filename)
         logger.info(f'Combined {len(x_list)} samples')   
         logger.info('Saving updated training_data set...')   
         with open(filepath, "wb") as f:
