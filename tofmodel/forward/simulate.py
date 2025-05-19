@@ -93,14 +93,8 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
         
         # trim initialized protons that don't touch slices
         logger.info(f"trimming protons that never touch slices")
-        def does_x_touch_slices(x):
-            return ((x < w*nslice) & (x > 0)).any()
-        proton_to_remove = []
-        for iproton in range(X.shape[0]):
-            if not does_x_touch_slices(X[iproton, :]):
-                proton_to_remove.append(iproton)
-        X = np.delete(X, proton_to_remove, axis=0)
-        logger.info(f"found {len(proton_to_remove)} protons to be trimmed")
+        mask = np.apply_along_axis(lambda x: ((x < w*nslice) & (x > 0)).any(), 1, X)
+        X = X[mask]
         logger.info(f"trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
         
         X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, enable_logging=enable_logging)
@@ -168,7 +162,10 @@ def simulate_inflow(tr, npulse, w, fa, t1, nslice, alpha, multi_factor, x_func, 
 def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
     # compute the number of spins in each slice over each tr
     num_proton_in_slice = np.zeros((npulse, nslice), dtype=int)
-    pos_at_end_of_tr_cycles = X[:, 0::int(nslice/multi_factor)]
+    stride = nslice // multi_factor
+    if nslice % multi_factor != 0:
+        raise ValueError("nslice must be divisible by multi_factor")
+    pos_at_end_of_tr_cycles = X[:, 0::stride]
     proton_slice = np.floor(pos_at_end_of_tr_cycles / w)
     for ipulse in range(npulse):
         all_proton_slice_id = proton_slice[:, ipulse]
