@@ -23,9 +23,10 @@ def train_net(param):
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=param.training.batch, shuffle=False)
 
     # initialize the model and optimizer
-    feature_size = X_train.shape[2]
+    input_size = X_train.shape[2]
     output_size = y_train.shape[2]
-    model = TOFinverse(param.data_simulation.num_input_features, feature_size, output_size)
+    model = TOFinverse(param.data_simulation.num_input_features, param.data_simulation.num_output_features, 
+                       input_size, output_size)
     optimizer = optim.Adam(model.parameters(), lr=param.training.lr)
     criterion = nn.MSELoss()
     print(model)
@@ -58,11 +59,10 @@ def train_net(param):
     ax.grid()
     ax.xaxis.set_ticks(np.arange(0, param.training.epochs, 4))
 
-    # evaluate model accuracy using test data
     model.eval()
     with torch.no_grad():
         outputs = model(X_test)
-        MSE = ((torch.pow((outputs - y_test[:, 0, :]), 2)).sum()) / outputs.numel()
+        MSE = torch.mean((outputs - y_test) ** 2)
         print(f'Mean Squared Error: {MSE:.4f}')
 
     # create folder associated with this simulation
@@ -89,14 +89,12 @@ def load_dataset(path):
     pkl_file = next(f for f in os.listdir(path) if f.endswith('.pkl'))
     with open(os.path.join(path, pkl_file), "rb") as f:
         X, y, _ = pickle.load(f)
-    X, y = X.astype(float), y.astype(float)
-        
-    # perform data augmentations
-    for i in range(X.shape[0]):
-        s_raw = X[i, :3, :].T           
-        s = utils.scale_epi(s_raw)         
-        s -= np.mean(s, axis=0)       
-        X[i, :3, :] = s.T
+    
+    # zscore slice signals relative to first slice
+    ref = X[:, 0, :]  
+    mean_ref = np.mean(ref, axis=1, keepdims=True)  
+    std_ref = np.std(ref, axis=1, keepdims=True)    
+    X[:, 0:3, :] = (X[:, 0:3, :] - mean_ref[:, None, :]) / std_ref[:, None, :]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
     X_train = torch.tensor(X_train, dtype=torch.float32)
@@ -113,7 +111,7 @@ def train(loader, model, criterion, optimizer):
     for inputs, labels in loader:
         optimizer.zero_grad()
         outputs = model(inputs)
-        loss = criterion(outputs, labels.squeeze())
+        loss = criterion(outputs.squeeze(), labels.squeeze())
         loss.backward()
         optimizer.step()
         epoch_loss += loss.item() * inputs.size(0)
@@ -127,7 +125,7 @@ def test(loader, model, criterion):
     with torch.no_grad():
         for inputs, labels in loader:
             outputs = model(inputs)
-            loss = criterion(outputs, labels.squeeze())
+            loss = criterion(outputs.squeeze(), labels.squeeze())
             epoch_loss += loss.item() * inputs.size(0)
     avg_loss = epoch_loss / len(loader.dataset)
     return avg_loss
