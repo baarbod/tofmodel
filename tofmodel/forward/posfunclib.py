@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy.integrate import solve_ivp
+from scipy.interpolate import interp1d
 
 
 def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
@@ -37,25 +38,16 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
     area0 = area[ind0]
     area_clipped = np.clip(area, 0.05, None)
 
-    def func(t, x, vts, xarea, area_clipped):
+    v_interp = interp1d(tr_vect, vts, kind='linear', bounds_error=False, fill_value='extrapolate')
+    area_interp = interp1d(xarea, area_clipped, kind='linear', bounds_error=False, fill_value=(area_clipped[0], area_clipped[-1]))
 
-        diffarray = np.abs(xarea - x[:, np.newaxis])
-        ind = diffarray.argmin(axis=1)
-        a = area_clipped[ind]
-        pos_term = area0 / a
-        
-        diffarray = np.absolute(tr_vect - t)
-        ind = diffarray.argmin()
-        time_term = vts[ind]
-        
-        state = pos_term * time_term
-        return state
-
-
-    p = (vts, xarea, area_clipped)
+    def func(t, x):
+        a = area_interp(x)
+        v = v_interp(t)
+        return (area0 / a) * v
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, x0, args=p, t_eval=t_eval, method='RK23')
+    sol = solve_ivp(func, trange, x0, t_eval=t_eval, method='RK23', vectorized=True)
 
     return sol.y
 
