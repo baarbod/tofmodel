@@ -1,6 +1,13 @@
 
-This repository contains the modeling framework used for quantifying CSF flow velocity from fMRI Inflow Signals.
 
-See tag v1.0 for the version of the code used in our paper: Ashenagar et al. 2025 Modeling dynamic inflow effects in fMRI to quantify cerebrospinal fluid flow. For using this framework, please use the latest version.
+This repository contains the modeling framework for quantifying cerebrospinal fluid (CSF) flow velocity from fMRI inflow signals.
 
-***Currently the code is being updated to facilitate usage of the pipeline and compatibility with other computing environments.
+See the [v1.0 tag](https://github.com/baarbod/tofmodel/releases/tag/v1.0) for the version of the code used in:
+
+**Ashenagar et al., 2025**  
+*Modeling dynamic inflow effects in fMRI to quantify cerebrospinal fluid flow.*
+
+v1.0 is uploaded for reference to the exact methods used in the paper.
+However, please use the latest version for improved usability and broader compatibility.
+
+> **Note:** The codebase is currently being updated to enhance the pipeline and ensure compatibility with other computing environments. An updated readme will be made to illustrate example usage and detailed features of this repository.
