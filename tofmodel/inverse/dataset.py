@@ -225,7 +225,6 @@ def define_input_params(num_sample, param, task_id):
         amplitude = np.random.uniform(bounds[:, 0], bounds[:, 1])
         phase = np.random.uniform(low=0, high=1/frequencies)
         voff = np.random.uniform(low=sp.voffset_lower, high=sp.voffset_upper)
-        noise_std = np.random.uniform(low=sp.gauss_noise_lower, high=sp.gauss_noise_upper)
         xarea, area = define_sample_area(param)
         
         batch_size = ds.num_samples // ds.num_batches
@@ -246,7 +245,6 @@ def define_input_params(num_sample, param, task_id):
             'task_id': task_id,
             'xarea_sample': xarea,
             'area_sample': area,
-            'gauss_noise_std': noise_std
         })
     return input_data
 
@@ -314,8 +312,8 @@ def simulate_parameter_set(isample, inputs):
     t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                           vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
-    s_raw = tm.simulate_inflow(p.repetition_time, p.num_pulse+p.num_pulse_baseline_offset, 
-                               p.slice_width, p.flip_angle, p.t1_time, p.num_slice, p.alpha_list, 
+    s_raw = tm.simulate_inflow(p.repetition_time, p.echo_time, p.num_pulse+p.num_pulse_baseline_offset, 
+                               p.slice_width, p.flip_angle, p.t1_time, p.t2_time, p.num_slice, p.alpha_list, 
                                p.MBF, x_func_area, multithread=False)[:, 0:3]
     s = s_raw[p.num_pulse_baseline_offset:, :]
     X[isample,0:3,:] = s.T
@@ -341,7 +339,6 @@ def run_simulations(param, dirs, task_id):
     """
     
     logger = logging.getLogger(__name__)
-    
     input_file = None
     for file in os.listdir(dirs['sorted']):
         if file.startswith(f"inputs_list_") and file.endswith(f"task{task_id:03}.pkl"):
@@ -352,7 +349,6 @@ def run_simulations(param, dirs, task_id):
     with open(input_file, 'rb') as f:
         inputs_batch = pickle.load(f)
     logger.info(f"loaded {input_file}")
-    
     batch_size = len(inputs_batch)
     Xshape = (batch_size, param.data_simulation.num_input_features, param.data_simulation.input_feature_size)
     Yshape = (batch_size, param.data_simulation.num_output_features, param.data_simulation.output_feature_size)
@@ -374,7 +370,6 @@ def run_simulations(param, dirs, task_id):
         logger.info(f"  simulation: {idx}, start time :{tstart:.3f} seconds, total simulation time: {(tend - tstart):.3f} seconds")
     total_times = end_times - start_times
     logger.info(f"Mean simulation time: {np.mean(total_times):.3f} +- {np.std(total_times):.3f}")
-
     config_path = os.path.join(dirs['sim_batched'], 'config_used.yml')
     OmegaConf.save(config=OmegaConf.create(param), f=config_path)
     output_path = os.path.join(dirs['sim_batched'], f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
@@ -400,12 +395,10 @@ def combine_simulations(param, dirs):
     """
     
     logger = logging.getLogger(__name__)
-    
     datasetdir = param.paths.datasetdir
     xs, ys, ins = [],[],[]
     config_flag = 0
     sim_files = os.listdir(dirs['sim_batched'])
-    
     if not sim_files:
         logger.warning(f"No files found in {dirs['sim_batched']}. Exiting.")
     else:
@@ -416,17 +409,16 @@ def combine_simulations(param, dirs):
                     with open(filepath, "rb") as f:
                         x, y, b = pickle.load(f)
                     xs.append(x); ys.append(y); ins.extend(b)
-                    logger.info(f"combined and removed {file}")
-                    os.remove(filepath)
+                    logger.info(f"combined {file}")
             if file.endswith('_used.yml') and not config_flag:
                 filepath = os.path.join(dirs['sim_batched'], file)
                 shutil.move(filepath, datasetdir)
                 config_flag = 1
     if xs and ys:
-        filename = f"output_{y.shape[0]}_samples.pkl"
-        filepath = os.path.join(datasetdir, filename)
-        logger.info(f'Combined {len(xs)} samples')   
+        logger.info(f'Combined {len(xs)} batches')   
         logger.info('Saving updated training_data set...')   
+        filename = f"output_{len(xs)*y.shape[0]}_samples.pkl"
+        filepath = os.path.join(datasetdir, filename)
         with open(filepath, "wb") as f:
             pickle.dump([np.concatenate(xs, axis=0) , np.concatenate(ys, axis=0), ins], f)
         logger.info('Finished saving.')   
