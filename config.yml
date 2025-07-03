@@ -1,0 +1,89 @@
+
+# parameters used in the fMRI acquisition protocol
+scan_param:
+  slice_width: 0.25
+  repetition_time: 0.5
+  echo_time: 0.03
+  flip_angle: 45
+  t1_time: 4
+  t2_time: 1.5
+  num_slice: 10
+  num_pulse: -1
+  num_pulse_baseline_offset: -1
+  MBF: 2
+  alpha_list:
+    - 0
+    - 0.1
+    - 0.2
+    - 0.3
+    - 0.4
+    - 0
+    - 0.1
+    - 0.2
+    - 0.3
+    - 0.4
+    
+# parameters for the training dataset
+data_simulation:
+  frequency_start: 0.01
+  frequency_end: 1.01
+  frequency_spacing: 0.01
+  num_batches: 100
+  num_input_features: 5
+  input_feature_size: 200
+  num_output_features: 1
+  output_feature_size: 200
+  num_samples: 1000
+  Xtype: float64
+  Ytype: float64
+
+# parameters to define how the dynamics of the flows are sampled
+sampling:
+
+  bounding_gaussians:
+    - name: slow
+      range: [0.035, 0.065]
+      scale: 0.1
+      fsd: 0.015
+    - name: breath
+      range: [0.1, 0.3]
+      scale: 0.3
+      fsd: 0.002
+      harmonics: # first element is the frequency multiplier, second element is the amplitude divisor
+        - [2, 3]
+        - [3, 6]
+    - name: cardiac
+      range: [0.8, 1.0]
+      scale: 0.3
+      fsd: 0.0075
+
+  global_offset: 0.01
+  global_lower_bound: 0
+  upper_fact: 1.4
+  lower_fact: 0.6
+
+  voffset_lower: 0.0
+  voffset_upper: 0.0
+
+  cross_sectional_area:
+    # areas supplied to the pipeline should be in centimeter units
+    # also, a position of x=0 cm must correspond to the edge of the first fMRI slice
+
+    mode: 'straight_tube' # options are ['straight_tube', 'custom', 'collection']
+
+    # specific parameters only for "custom" mode
+    path_to_custom: /path/to/custom_area.txt # column 1 = positions in cm, column 2 = areas in cm^2 
+
+    # specific parameters only for "collection" mode
+    path_to_collection: /path/to/area_collection # folder containing area.txt files
+    area_scale_lower: 0.8
+    area_scale_upper: 1.2
+    slc1_offset_lower: -1.0 # cm
+    slc1_offset_upper: 1.0 # cm
+
+paths:
+  rootdir: /path/to/rootdir
+  datasetdir: /path/to/datasetdir
+  outdir: /path/to/outdir
+  path_to_pca_model: /path/to/pca_model.pkl
+  path_to_noise_data: /path/to/noise_data.pkl
