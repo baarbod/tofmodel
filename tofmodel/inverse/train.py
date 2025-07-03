@@ -11,12 +11,13 @@ import pickle
 import time 
 from tofmodel.inverse.models import TOFinverse
 import tofmodel.inverse.utils as utils
+import tofmodel.inverse.noise as noise
 
 
 def train_net(param):
 
     # param['training_data'] = training_data
-    X_train, X_test, y_train, y_test = load_dataset(param.paths.datasetdir)
+    X_train, X_test, y_train, y_test = load_dataset(param)
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     test_dataset = torch.utils.data.TensorDataset(X_test, y_test)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=param.training.batch, shuffle=True)
@@ -25,8 +26,15 @@ def train_net(param):
     # initialize the model and optimizer
     input_size = X_train.shape[2]
     output_size = y_train.shape[2]
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"Running training using cuda GPU")
+    else:
+        device = torch.device("cpu")
+        print(f"Running training using CPU") 
     model = TOFinverse(param.data_simulation.num_input_features, param.data_simulation.num_output_features, 
                        input_size, output_size)
+    model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=param.training.lr)
     criterion = nn.MSELoss()
     print(model)
@@ -85,11 +93,34 @@ def train_net(param):
     print('Finished saving.')   
 
 
-def load_dataset(path):
+def load_dataset(param):
+    path = param.paths.datasetdir
     pkl_file = next(f for f in os.listdir(path) if f.endswith('.pkl'))
     with open(os.path.join(path, pkl_file), "rb") as f:
         X, y, _ = pickle.load(f)
     
+    if param.noise.injection_method == 'gaussian':
+        print(f"Adding gaussian noise")
+        gauss_low = param.noise.gauss_noise_lower
+        gauss_high = param.noise.gauss_noise_upper
+        X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
+    elif param.noise.injection_method == 'pca':
+        noise_data_path = param.noise.path_to_nonflow_data
+        pca_model_path = param.noise.path_to_save_pca_model
+        print(f"Adding pca method noise")
+        if os.path.exists(pca_model_path):
+            print(f"Using saved PCA model: {pca_model_path}")
+            model = noise.load_pca_model(pca_model_path)
+        else:
+            print(f"PCA model not found")
+            print(f"Generating new model using noise data: {noise_data_path}")
+            noise_data = noise.load_noise_data(noise_data_path)
+            model = noise.define_pca_model(noise_data)
+            print(f"Saving PCA model to: {pca_model_path}")
+        X = noise.add_pca_noise(X, model)
+    else:
+        print(f"no noise being added")
+        
     # zscore slice signals relative to first slice
     ref = X[:, 0, :]  
     mean_ref = np.mean(ref, axis=1, keepdims=True)  
@@ -97,10 +128,10 @@ def load_dataset(path):
     X[:, 0:3, :] = (X[:, 0:3, :] - mean_ref[:, None, :]) / std_ref[:, None, :]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    y_train = torch.tensor(y_train, dtype=torch.float32)
-    X_test = torch.tensor(X_test, dtype=torch.float32)
-    y_test = torch.tensor(y_test, dtype=torch.float32)
+    X_train = torch.tensor(X_train, dtype=torch.float32).cuda()
+    y_train = torch.tensor(y_train, dtype=torch.float32).cuda()
+    X_test = torch.tensor(X_test, dtype=torch.float32).cuda()
+    y_test = torch.tensor(y_test, dtype=torch.float32).cuda()
 
     return X_train, X_test, y_train, y_test
 
