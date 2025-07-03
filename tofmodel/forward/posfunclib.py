@@ -5,7 +5,7 @@ from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 
 
-def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
+def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area, solver_method='RK23'):
     """ Perform numerical integration of v(x, t) to obtain positions at each time point
     
     Parameters
@@ -34,6 +34,9 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
         positions (cm) at each time point
     """
     
+    if np.ndim(x0) == 0:
+        x0 = np.expand_dims(x0, axis=0)
+    
     ind0 = np.abs(xarea).argmin() # find where xarea is zero
     area0 = area[ind0]
     area_clipped = np.clip(area, 0.05, None)
@@ -47,7 +50,7 @@ def compute_position_numeric_spatial(t_eval, x0, tr_vect, vts, xarea, area):
         return (area0 / a) * v
 
     trange = [np.min(t_eval), np.max(t_eval)]
-    sol = solve_ivp(func, trange, x0, t_eval=t_eval, method='RK23', vectorized=True)
+    sol = solve_ivp(func, trange, x0, t_eval=t_eval, method=solver_method, vectorized=True)
 
     return sol.y
 
