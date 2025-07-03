@@ -14,14 +14,15 @@ import tofmodel.inverse.utils as utils
 import tofmodel.inverse.noise as noise
 
 
-def train_net(param):
-
-    # param['training_data'] = training_data
-    X_train, X_test, y_train, y_test = load_dataset(param)
+def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None, 
+              gauss_low=0.01, gauss_high=0.1, noise_scale=1.5, exp_name=''):
+    
+    X_train, X_test, y_train, y_test = load_dataset(param, noise_method=noise_method, 
+                                                    gauss_low=gauss_low, gauss_high=gauss_high, scalemax=noise_scale)
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     test_dataset = torch.utils.data.TensorDataset(X_test, y_test)
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=param.training.batch, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=param.training.batch, shuffle=False)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch, shuffle=False)
 
     # initialize the model and optimizer
     input_size = X_train.shape[2]
@@ -31,11 +32,11 @@ def train_net(param):
         print(f"Running training using cuda GPU")
     else:
         device = torch.device("cpu")
-        print(f"Running training using CPU") 
+        print(f"Running training using CPU")
     model = TOFinverse(param.data_simulation.num_input_features, param.data_simulation.num_output_features, 
                        input_size, output_size)
     model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=param.training.lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
     print(model)
 
@@ -44,13 +45,13 @@ def train_net(param):
     test_losses = []
     time_start = time.time()
     
-    for epoch in range(param.training.epochs):
+    for epoch in range(epochs):
         train_loss = train(train_loader, model, criterion, optimizer)
         test_loss = test(test_loader, model, criterion)
         
         train_losses.append(train_loss)
         test_losses.append(test_loss)
-        print(f'Epoch [{epoch+1}/{param.training.epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}')
+        print(f'Epoch [{epoch+1}/{epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}')
 
     time_end = time.time()
     training_time = time_end - time_start
@@ -65,7 +66,7 @@ def train_net(param):
     ax.set_ylabel('Loss')
     ax.legend()
     ax.grid()
-    ax.xaxis.set_ticks(np.arange(0, param.training.epochs, 4))
+    ax.xaxis.set_ticks(np.arange(0, epochs, 4))
 
     model.eval()
     with torch.no_grad():
@@ -76,7 +77,8 @@ def train_net(param):
     # create folder associated with this simulation
     folder_root = os.path.join(param.paths.datasetdir, "experiments")
     formatted_datetime =  utils.get_formatted_day_time()
-    folder_name = f"{formatted_datetime}_training_run"
+    exp_name = '_' + exp_name
+    folder_name = f"{formatted_datetime}_training_run{exp_name}"
     folder = os.path.join(folder_root, folder_name)
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -93,31 +95,25 @@ def train_net(param):
     print('Finished saving.')   
 
 
-def load_dataset(param):
-    path = param.paths.datasetdir
-    pkl_file = next(f for f in os.listdir(path) if f.endswith('.pkl'))
-    with open(os.path.join(path, pkl_file), "rb") as f:
+def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, scalemax=1.5):
+    pkl_file = next(f for f in os.listdir(param.paths.datasetdir) if f.endswith('.pkl'))
+    with open(os.path.join(param.paths.datasetdir, pkl_file), "rb") as f:
         X, y, _ = pickle.load(f)
-    
-    if param.noise.injection_method == 'gaussian':
+    if noise_method == 'gaussian':
         print(f"Adding gaussian noise")
-        gauss_low = param.noise.gauss_noise_lower
-        gauss_high = param.noise.gauss_noise_upper
         X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
-    elif param.noise.injection_method == 'pca':
-        noise_data_path = param.noise.path_to_nonflow_data
-        pca_model_path = param.noise.path_to_save_pca_model
+    elif noise_method == 'pca':
         print(f"Adding pca method noise")
-        if os.path.exists(pca_model_path):
-            print(f"Using saved PCA model: {pca_model_path}")
-            model = noise.load_pca_model(pca_model_path)
+        if os.path.exists(param.paths.path_to_pca_model):
+            print(f"Using saved PCA model: {param.paths.path_to_pca_model}")
+            model = noise.load_pca_model(param.paths.path_to_pca_model)
         else:
             print(f"PCA model not found")
-            print(f"Generating new model using noise data: {noise_data_path}")
-            noise_data = noise.load_noise_data(noise_data_path)
+            print(f"Generating new model using noise data: {param.paths.path_to_noise_data}")
+            noise_data = noise.load_noise_data(param.paths.path_to_noise_data)
             model = noise.define_pca_model(noise_data)
-            print(f"Saving PCA model to: {pca_model_path}")
-        X = noise.add_pca_noise(X, model)
+            print(f"Saving PCA model to: {param.paths.path_to_pca_model}")
+        X = noise.add_pca_noise(X, model, scalemax=scalemax)
     else:
         print(f"no noise being added")
         
@@ -128,10 +124,16 @@ def load_dataset(param):
     X[:, 0:3, :] = (X[:, 0:3, :] - mean_ref[:, None, :]) / std_ref[:, None, :]
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
-    X_train = torch.tensor(X_train, dtype=torch.float32).cuda()
-    y_train = torch.tensor(y_train, dtype=torch.float32).cuda()
-    X_test = torch.tensor(X_test, dtype=torch.float32).cuda()
-    y_test = torch.tensor(y_test, dtype=torch.float32).cuda()
+    if torch.cuda.is_available():
+        X_train = torch.tensor(X_train, dtype=torch.float32).cuda()
+        y_train = torch.tensor(y_train, dtype=torch.float32).cuda()
+        X_test = torch.tensor(X_test, dtype=torch.float32).cuda()
+        y_test = torch.tensor(y_test, dtype=torch.float32).cuda()
+    else:
+        X_train = torch.tensor(X_train, dtype=torch.float32)
+        y_train = torch.tensor(y_train, dtype=torch.float32)
+        X_test = torch.tensor(X_test, dtype=torch.float32)
+        y_test = torch.tensor(y_test, dtype=torch.float32)
 
     return X_train, X_test, y_train, y_test
 
