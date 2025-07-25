@@ -99,9 +99,19 @@ def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, sca
     pkl_file = next(f for f in os.listdir(param.paths.datasetdir) if f.endswith('.pkl'))
     with open(os.path.join(param.paths.datasetdir, pkl_file), "rb") as f:
         X, y, _ = pickle.load(f)
+    
+    nan_ind = ~np.isnan(X).any(axis=-1).any(axis=-1)
+    X = X[nan_ind]
+    y = y[nan_ind]
+    
+    inf_ind = ~np.isinf(X).any(axis=-1).any(axis=-1)
+    X = X[inf_ind]
+    y = y[inf_ind]
+    
     if noise_method == 'gaussian':
         print(f"Adding gaussian noise")
         X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
+        print('noise injection complete')
     elif noise_method == 'pca':
         print(f"Adding pca method noise")
         if os.path.exists(param.paths.path_to_pca_model):
@@ -113,10 +123,12 @@ def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, sca
             noise_data = noise.load_noise_data(param.paths.path_to_noise_data)
             model = noise.define_pca_model(noise_data)
             print(f"Saving PCA model to: {param.paths.path_to_pca_model}")
+            noise.save_pca_model(model, param.paths.path_to_pca_model)
         X = noise.add_pca_noise(X, model, scalemax=scalemax)
+        print('noise injection complete')
     else:
         print(f"no noise being added")
-        
+    
     # zscore slice signals relative to first slice
     ref = X[:, 0, :]  
     mean_ref = np.mean(ref, axis=1, keepdims=True)  
