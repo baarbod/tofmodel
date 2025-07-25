@@ -9,13 +9,15 @@ import pickle
 def add_gaussian_noise(X, nslice=3, mean=0, gauss_low=0.01, gauss_high=0.1):
     gauss_noise_std = np.random.uniform(low=gauss_low, high=gauss_high)
     noise = np.random.normal(mean, gauss_noise_std, (nslice, X.shape[2]))
-    return X[:, :nslice, :] + noise
+    X[:, :nslice, :] += noise
+    return X
 
 
 def add_pca_noise(X, model, nslice=3, scalemax=1.5):
     noise = sample_noise(X, model)
     noise_scaled = scale_noise(X, noise, scalemax=scalemax)
-    return X[:, :nslice, :] + noise_scaled
+    X[:, :nslice, :] += noise_scaled
+    return X
 
 
 def define_pca_model(noise_data, n_component=25):
