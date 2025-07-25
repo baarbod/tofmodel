@@ -35,7 +35,7 @@ def view_sampling(config_path):
     plt.ylabel("Velocity power", fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.4)
 
-    num_samples = 10 * simulation_param.num_samples
+    num_samples = 1000
     for _ in range(num_samples):
         bound_array = get_sampling_bounds(frequencies, sampling_param.bounding_gaussians, 
                                           sampling_param.lower_fact, sampling_param.upper_fact, sampling_param.global_offset)
@@ -59,36 +59,46 @@ def view_sampling(config_path):
     plt.close()
     print(f"Saved plot to {outputdir}")
     
-    
+
+from functools import partial
+from tofmodel.forward import posfunclib as pfl
+from tofmodel.forward import simulate as tm
+import tofmodel.inverse.dataset as dataset
+
+
 def view_simulations(config_path):
-    
     param = OmegaConf.load(config_path)
-    datasetdir = param.paths.datasetdir
     outputdir = param.paths.outdir
-    
-    # find the correct output file
-    output_file = None
-    for file in os.listdir(datasetdir):
-        if f"output" in file:
-            output_file = os.path.join(datasetdir, file)
-            
-    with open(output_file, 'rb') as f:
-        output = pickle.load(f)
-    
-    inflow_array = output[0]
-    velocity_array = output[1]
-    random_sample = np.random.randint(inflow_array.shape[0])
     dt = 0.1
     tr = param.scan_param.repetition_time
+
+    def run_simulation(input_data):
+        p = input_data['param'].scan_param
+        t = np.arange(0, p.num_pulse*p.repetition_time, 0.1)
+        v = utils.define_velocity_fourier(t, input_data['velocity_input'], 
+                                        input_data['frequencies'], input_data['rand_phase'], 
+                                        input_data['v_offset'])
+        t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
+        x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
+                            vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
+        s_raw = tm.simulate_inflow(p.repetition_time, p.echo_time, p.num_pulse+p.num_pulse_baseline_offset, 
+                                p.slice_width, p.flip_angle, p.t1_time, p.t2_time, p.num_slice, p.alpha_list, 
+                                p.MBF, x_func_area, multithread=False)[:, 0:3]
+        return v, s_raw[p.num_pulse_baseline_offset:, :]
+
+
+    param = OmegaConf.load(config_path)
+    num_sample = 1
+    task_id = 1
+    input_data = dataset.define_input_params(num_sample, param, task_id)[0]
+    v, s = run_simulation(input_data)
+
+    xarea = input_data['xarea_sample']
+    area = input_data['area_sample']
     
-    s = inflow_array[random_sample, :3, :].T
-    v = velocity_array[random_sample, 0, :]
-    xarea = inflow_array[random_sample, 3, :]
-    area = inflow_array[random_sample, 4, :]
     fig, axes = plt.subplots(nrows=3, ncols=1)
-    time_inflow = tr * np.arange(s.shape[0])
-    time_velocity = dt * np.arange(v.size)
-    axes[0].set_title(f"sample {random_sample}")
+    time_inflow = np.arange(0, param.scan_param.num_pulse*tr, tr)
+    time_velocity = np.arange(0, param.scan_param.num_pulse*tr, dt)
     axes[0].plot(time_inflow, s)                      
     axes[1].plot(time_velocity, v, color='black') 
     axes[1].axhline(y=0, color='grey', linestyle='--')
@@ -99,3 +109,4 @@ def view_simulations(config_path):
     plt.savefig(os.path.join(outputdir,  "example_output_simulation.png"))
     plt.close()
     print(f"Saved plot to {outputdir}")
+    
