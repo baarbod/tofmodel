@@ -8,7 +8,7 @@ from tofmodel.forward import simulate as tm
 from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 
 
-def plot_forward_sim_visual(w, tr, npulse, fa, nslice, alpha, t1, multi_factor, x_func, xlim, ylim, axis=False, figsize=(2, 2)):
+def plot_forward_sim_visual(w, tr, te, npulse, fa, nslice, alpha, t1, t2, multi_factor, x_func, xlim, ylim, axis=False, figsize=(2, 2)):
     
     if not axis:
         fig, ax = plt.subplots( figsize=figsize)
@@ -47,7 +47,7 @@ def plot_forward_sim_visual(w, tr, npulse, fa, nslice, alpha, t1, multi_factor, 
     X_for_plot = tm.compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
     
     nproton_for_plot = X_for_plot.shape[0]
-    params = [(npulse, nslice, X_for_plot[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual)
+    params = [(npulse, nslice, X_for_plot[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual)
                 for iproton in range(nproton_for_plot)]
     s_proton = []
     for iproton in range(nproton_for_plot):
@@ -94,8 +94,8 @@ def draw_fading_curve(ax, tproton, xproton, val_tuple, lw=2, s=None, marker=None
     alpha_fade /= np.max(alpha_fade)   
     alpha_fade[alpha_fade < 0] = 0
     
-    # # CLAMP
-    # alpha_fade[alpha_fade < 0.15] = 0.15
+    # CLAMP
+    alpha_fade[alpha_fade < 0.15] = 0.15
     
     points = np.array([tproton, xproton]).T.reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
@@ -143,7 +143,7 @@ def draw_pulse_lines(ax, timings, pulse_slice, w):
 
 def compute_proton_signal_contribution(iproton, params):
     
-    npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, t1, pulse_slice, pulse_tr_actual = params
+    npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual = params
     
     # convert absolute positions to slice location
     proton_slice = np.floor(np.repeat(Xproton, multi_factor) / w)
@@ -157,7 +157,7 @@ def compute_proton_signal_contribution(iproton, params):
         tprev = timings_with_repeats[pulse_id]
 
         npulse = count + 1  # correcting for zero-based numbering
-        s = fre_signal(npulse, fa, tr, t1, dt_list)
+        s = fre_signal(npulse, fa, tr, te, t1, t2, dt_list)
         signal_at_time.append((timings_with_repeats[pulse_id], s))
         
     return signal_at_time
