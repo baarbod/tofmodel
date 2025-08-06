@@ -140,8 +140,8 @@ def get_sampling_bounds(frequencies, bounding_gaussians, lower_fact, upper_fact,
     Gtotal = np.zeros_like(frequencies)
     for g in bounding_gaussians:
         amp = np.random.uniform(low=0, high=g['scale'])
-        freq = np.random.uniform(*g['range'])
-        fsd = g['fsd']
+        freq = np.random.uniform(*g['freq_range'])
+        fsd = np.random.uniform(*g['fsd_range'])
         G = amp * N(frequencies, freq, fsd)
         for harm in g.get('harmonics', []):
             G += amp/harm[1] * N(frequencies, freq*harm[0], fsd)
@@ -267,7 +267,7 @@ def compute_sample_init_positions(isample, input_data):
     """
 
     p = input_data['param'].scan_param
-    t = np.arange(0, p.num_pulse*p.repetition_time, 0.1)
+    t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
     v = utils.define_velocity_fourier(t, input_data['velocity_input'], input_data['frequencies'], input_data['rand_phase'], input_data['v_offset'])
     t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
@@ -305,7 +305,7 @@ def simulate_parameter_set(isample, inputs):
     Yshm = msm.SharedMemory(name=f"Yarray{input_data['task_id']}")
     X = np.ndarray(input_data['Xshape'], dtype=input_data['Xtype'], buffer=Xshm.buf)
     Y = np.ndarray(input_data['Yshape'], dtype=input_data['Ytype'], buffer=Yshm.buf)
-    t = np.arange(0, p.num_pulse*p.repetition_time, 0.1)
+    t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
     v = utils.define_velocity_fourier(t, input_data['velocity_input'], 
                                       input_data['frequencies'], input_data['rand_phase'], 
                                       input_data['v_offset'])
