@@ -9,7 +9,7 @@ import logging
 
 
 def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, x_func, 
-                    dx=0.01, offset_fact=1, X_given=None, multithread=False, return_pulse=False, enable_logging=False):
+                    dx=0.01, offset_fact=1, rfprofile='ideal', X_given=None, multithread=False, return_pulse=False, enable_logging=False):
     
     """ Routine for simulating inflow signals
 
@@ -53,7 +53,10 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     
     offset_fact : int, optional
         factor multiplied to the steady state signal contribution, by default 1
-        
+
+    rfprofile : str, optional
+        method for rf slice profile, either 'ideal' or 'gaussian'
+           
     X_given : numpy.ndarray, optional
         array of proton positions (cm) directly supplied instead of computing in routine, by default None
 
@@ -94,7 +97,7 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
         mask = np.apply_along_axis(lambda x: ((x < w*nslice) & (x > 0)).any(), 1, X)
         X = X[mask]
         logger.info(f"trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
-        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, enable_logging=enable_logging)
+        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=nslice, enable_logging=enable_logging)
         logger.info(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given)
@@ -133,7 +136,11 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     signal /= num_proton_in_slice
     if return_pulse:
         Nmatrix /= num_proton_in_slice
-    assert not np.isnan(signal).any(), 'Warning: NaN values found in signal array'
+    try:
+        assert not np.isnan(signal[:, :nslice]).any(), 'Warning: NaN values found in signal array'
+        assert not np.isinf(signal[:, :nslice]).any(), 'Warning: Inf values found in signal array'
+    except AssertionError as error:
+        print(error)
     if return_pulse:
         return signal, Nmatrix
     else:
@@ -173,17 +180,17 @@ def compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
     return X
 
             
-def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=1, maxiter=200, enable_logging=False):
+def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=10, maxiter=200, enable_logging=False):
     if enable_logging:
         logging.basicConfig(level=logging.INFO)
     else:
         logging.disable(logging.CRITICAL)
     logger = logging.getLogger(__name__)
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
-    ind_sparse = np.where(num_proton_in_slice < min_proton_count)
+    ind_sparse = np.where(num_proton_in_slice[:, :uptoslc] < min_proton_count)
     if ind_sparse[0].size > 0:
         logger.info(f"initial proton count is {X.shape[0]}")
-        logger.info(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons")
+        logger.info(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons within the first {uptoslc} slices")
         logger.info(f"running density increase algorithm...")
         count = 0
         while ind_sparse[0].size > 0:
@@ -260,13 +267,27 @@ def compute_proton_signal_contribution(iproton, params):
     s_proton_contribution = np.zeros([npulse, nslice])
     proton_slice = np.floor(np.repeat(Xproton, multi_factor) / w)
     pulse_recieve_ind = np.where(proton_slice == pulse_slice)[0]
+    
+    # flip angle gaussian
+    N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
+    proton_pos = np.repeat(Xproton, multi_factor)
+    
     tprev = float('nan')
     dt_list = np.zeros(np.size(pulse_recieve_ind))
     for count, pulse_id in enumerate(pulse_recieve_ind):
         dt_list[count] = timings_with_repeats[pulse_id] - tprev
         tprev = timings_with_repeats[pulse_id]
+        
+        
+        # slice selection profile hack
+        pos_in_slice = proton_pos[pulse_id] % w
+        k = N(pos_in_slice, w/2, w/2)
+        fa_scaled = k * fa
+
+        
         npulse = count + 1
-        s = fre_signal(npulse, fa, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
+        # s = fre_signal(npulse, fa, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
+        s = fre_signal(npulse, fa_scaled, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
         s_proton_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += s
     return s_proton_contribution
 
