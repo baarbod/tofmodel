@@ -35,7 +35,7 @@ x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t, vts=v, xa
 signal = tm.simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha_list, MBF, x_func_area, multithread=False)
 tr_vect = tr*np.arange(0, signal.shape[0])
 
-# PLOTTING FIRST 3 SLICES
+# PLOTTING SIGNAL IN THE FIRST 4 SLICES
 fig, ax = plt.subplots()
 ax.plot(tr_vect, signal[:, :4])
 ax.set_xlabel('Time (s)')
