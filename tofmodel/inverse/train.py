@@ -12,10 +12,12 @@ import time
 from tofmodel.inverse.models import TOFinverse
 import tofmodel.inverse.utils as utils
 import tofmodel.inverse.noise as noise
+import json
 
 
 def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None, 
-              gauss_low=0.01, gauss_high=0.1, noise_scale=1.5, exp_name=''):
+              gauss_low=0.01, gauss_high=0.1, noise_scale=1.5, exp_name='',
+              patience=15, min_delta=1e-4, warmup_epochs=10):
     
     X_train, X_test, y_train, y_test = load_dataset(param, noise_method=noise_method, 
                                                     gauss_low=gauss_low, gauss_high=gauss_high, scalemax=noise_scale)
@@ -39,10 +41,37 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
     print(model)
+    
+    # Prepare experiment folder
+    folder_root = os.path.join(param.paths.datasetdir, "experiments")
+    formatted_datetime = utils.get_formatted_day_time()
+    folder_name = f"{formatted_datetime}_training_run_{exp_name}"
+    folder = os.path.join(folder_root, folder_name)
+    os.makedirs(folder, exist_ok=True)
+    checkpoint_path = os.path.join(folder, 'best_model.pth')
 
+    # Save hyperparameters and config
+    config = {
+        'epochs': epochs,
+        'batch': batch,
+        'lr': lr,
+        'noise_method': noise_method,
+        'gauss_low': gauss_low,
+        'gauss_high': gauss_high,
+        'noise_scale': noise_scale,
+        'patience': patience,
+        'min_delta': min_delta,
+        'warmup_epochs': warmup_epochs,
+        'param_datasetdir': param.paths.datasetdir
+    }
+    with open(os.path.join(folder, 'training_config.json'), 'w') as f:
+        json.dump(config, f, indent=4)
+        
     # training loop
     train_losses = []
     test_losses = []
+    best_loss = float('inf')
+    patience_counter = 0
     time_start = time.time()
     
     for epoch in range(epochs):
@@ -52,48 +81,49 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
         train_losses.append(train_loss)
         test_losses.append(test_loss)
         print(f'Epoch [{epoch+1}/{epochs}], Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}')
-
+        
+        # Early stopping check after warmup
+        if epoch >= warmup_epochs:
+            if test_loss < best_loss - min_delta:
+                best_loss = test_loss
+                patience_counter = 0
+                # Save checkpoint
+                torch.save({
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'train_loss': train_loss,
+                    'val_loss': test_loss
+                }, checkpoint_path)
+                print(f"Saved best model checkpoint at epoch {epoch+1}")
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f"Early stopping at epoch {epoch+1}")
+                    break
+        
+        
     time_end = time.time()
-    training_time = time_end - time_start
-    print(f"Total time for training loop: {training_time:.4f} seconds")
+    print(f"Total time for training loop: {time_end - time_start:.2f} seconds")
 
-    # plot loss vs. epoch for training and evaluation data
-    fig_loss, ax= plt.subplots()
-    ax.plot(train_losses, label='train data')
-    with torch.no_grad():
-        ax.plot(np.array(test_losses), label='test data')
+    history = {'train_losses': train_losses, 'test_losses': test_losses}
+    np.savez(os.path.join(folder, 'training_history.npz'), **history)
+    
+    # plot loss curve
+    fig, ax= plt.subplots()
+    ax.plot(train_losses, label='Train Loss')
+    ax.plot(test_losses, label='Test Loss')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.legend()
     ax.grid()
-    ax.xaxis.set_ticks(np.arange(0, epochs, 4))
-
-    model.eval()
-    with torch.no_grad():
-        outputs = model(X_test)
-        MSE = torch.mean((outputs - y_test) ** 2)
-        print(f'Mean Squared Error: {MSE:.4f}')
-
-    # create folder associated with this simulation
-    folder_root = os.path.join(param.paths.datasetdir, "experiments")
-    formatted_datetime =  utils.get_formatted_day_time()
-    exp_name = '_' + exp_name
-    folder_name = f"{formatted_datetime}_training_run{exp_name}"
-    folder = os.path.join(folder_root, folder_name)
-    if not os.path.exists(folder):
-        os.makedirs(folder)
-
-    # save plot of MSE loss vs. epochs
-    figpath = os.path.join(folder, 'MSE_loss_vs_epochs.png')
-    fig_loss.savefig(figpath, format='png')
-
-    # save training information
-    num_samples = X_train.shape[0]
-    output_path = os.path.join(folder, f"model_state_{num_samples}_samples.pth")
-    print('Saving  training experiment...')   
-    torch.save(model.state_dict(), output_path)
-    print('Finished saving.')   
-
+    ax.xaxis.set_ticks(np.arange(0, len(train_losses), max(1, len(train_losses)//10)))
+    
+    plot_path = os.path.join(folder, 'loss_vs_epochs.png')
+    fig.savefig(plot_path)
+    print(f"Saved loss plot to {plot_path}")
+    
+    print(f"Best validation loss: {best_loss}")
 
 def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, scalemax=1.5):
     pkl_file = next(f for f in os.listdir(param.paths.datasetdir) if f.endswith('.pkl'))
