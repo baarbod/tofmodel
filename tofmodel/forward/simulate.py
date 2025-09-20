@@ -266,29 +266,43 @@ def compute_proton_signal_contribution(iproton, params):
     npulse, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact = params
     s_proton_contribution = np.zeros([npulse, nslice])
     proton_slice = np.floor(np.repeat(Xproton, multi_factor) / w)
-    pulse_recieve_ind = np.where(proton_slice == pulse_slice)[0]
+
+    # new approach - RF pulse effects target slice, and the one before/after     
+    pulse_recieve_ind_behind = np.where(proton_slice == pulse_slice-1)[0]
+    pulse_recieve_ind_target = np.where(proton_slice == pulse_slice)[0]
+    pulse_recieve_ind_front = np.where(proton_slice == pulse_slice+1)[0]
+
+    # # old approach - RF pulse only effects target slice
+    # pulse_recieve_ind_target = np.where(proton_slice == pulse_slice)[0]
+    # pulse_recieve_list = [pulse_recieve_ind_target]
+    # w_offsets = [0]
+    
+    # catch pulses outside slices
+    outside_ind = np.where(proton_slice[pulse_recieve_ind_front] >= nslice)[0]
+    pulse_recieve_ind_front = np.delete(pulse_recieve_ind_front, outside_ind)
+    pulse_recieve_list = [pulse_recieve_ind_behind, pulse_recieve_ind_target, pulse_recieve_ind_front]
+    w_offsets = [-w, 0, w]
     
     # flip angle gaussian
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2)
     proton_pos = np.repeat(Xproton, multi_factor)
     
-    tprev = float('nan')
-    dt_list = np.zeros(np.size(pulse_recieve_ind))
-    for count, pulse_id in enumerate(pulse_recieve_ind):
-        dt_list[count] = timings_with_repeats[pulse_id] - tprev
-        tprev = timings_with_repeats[pulse_id]
-        
-        
-        # slice selection profile hack
-        pos_in_slice = proton_pos[pulse_id] % w
-        k = N(pos_in_slice, w/2, w/2)
-        fa_scaled = k * fa
+    for pulse_recieve_ind, w_offset in zip(pulse_recieve_list, w_offsets):
+        tprev = float('nan')
+        dt_list = np.zeros(np.size(pulse_recieve_ind))
+        for count, pulse_id in enumerate(pulse_recieve_ind):
+            dt_list[count] = timings_with_repeats[pulse_id] - tprev
+            tprev = timings_with_repeats[pulse_id]
+            
+            # slice selection profile hack
+            pos_in_slice = proton_pos[pulse_id] % w + w_offset
+            k = N(pos_in_slice, w/2, w/2)
+            fa_scaled = k * fa
 
-        
-        npulse = count + 1
-        # s = fre_signal(npulse, fa, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
-        s = fre_signal(npulse, fa_scaled, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
-        s_proton_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += s
+            npulse = count + 1
+            # s = fre_signal(npulse, fa, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
+            s = fre_signal(npulse, fa_scaled, tr, te, t1, t2, dt_list, offset_fact=offset_fact)
+            s_proton_contribution[pulse_tr_actual[pulse_id], proton_slice[pulse_id].astype(int)] += s
     return s_proton_contribution
 
 
