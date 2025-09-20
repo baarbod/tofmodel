@@ -53,18 +53,25 @@ def main():
     plt.tight_layout()
     plt.show()
     
-    # frequency domain plot
     tr = param.scan_param.repetition_time
-    fs = 1/tr
-    f, psd_sraw = welch(sraw[:, 0], fs=fs, nperseg=256)
-    f, psd_velocity = welch(velocity_NN, fs=fs, nperseg=256)
-    f, psd_sim = welch(ssim[:, 0], fs=fs, nperseg=256)
-    fig_psd, [ax1, ax2, ax3] = plt.subplots(nrows=3, ncols=1)
-    ax1.plot(f, psd_sraw)
+    fs = 1 / tr
+    f, psd_velocity = welch(velocity_NN, fs=fs)
+    fig_psd, [ax1, ax2, ax3] = plt.subplots(nrows=3, ncols=1, figsize=(6, 8))
+    for i in range(3):
+        f, psd_sraw = welch(sraw[:, i], fs=fs)
+        ax1.plot(f, psd_sraw, label=f"sraw col {i+1}")
+    ax1.set_title("sraw (first 3 columns)")
+    ax1.legend()
     ax2.plot(f, psd_velocity, color='black')
-    ax3.plot(f, psd_sim)
+    ax2.set_title("velocity_NN")
+    for i in range(3):
+        f, psd_sim = welch(ssim[:, i], fs=fs)
+        ax3.plot(f, psd_sim, label=f"ssim col {i+1}")
+    ax3.set_title("ssim (first 3 columns)")
+    ax3.legend()
     plt.tight_layout()
     plt.show()
+    
 
     print("Saving results...")
     fig_td.savefig(os.path.join(args.outdir, 'signal_TD_plot.png'), format='png')
@@ -110,15 +117,14 @@ def evaluate_output(eval_data_list):
 
 def load_data(spath, area_path, param):
     s = np.loadtxt(spath)
-    A = np.loadtxt(area_path, skiprows=1, delimiter=',')
+    A = np.loadtxt(area_path)
     xarea, area = A[:, 0], A[:, 1]
     new_length = param.data_simulation.input_feature_size
     x_old = np.linspace(0, 1, xarea.size)
     x_new = np.linspace(0, 1, new_length)
     xarea_resampled = np.interp(x_new, x_old, xarea)
     area_resampled = np.interp(x_new, x_old, area)
-    return s[20:620, :3], xarea_resampled, area_resampled
-    # return s[20:, :3], xarea_resampled, area_resampled
+    return s[20:, :3], xarea_resampled, area_resampled
 
 
 def scale_data(s):
@@ -142,7 +148,7 @@ def load_network(state_filename, param):
     return model
 
 
-def infer_velocity(model, s_data_for_nn, xarea, area, input_length=200, output_length=200):
+def infer_velocity(model, s_data_for_nn, xarea, area, input_length=300, output_length=300):
     velocity_NN = utils.input_batched_signal_into_NN_area(s_data_for_nn, model, 
                                                       xarea, area,
                                                       input_feature_length=input_length, 
@@ -162,12 +168,13 @@ def run_forward_model(velocity_NN, xarea, area, param):
     multi_factor = param.scan_param.MBF
     alpha = param.scan_param.alpha_list
     num_pulse_baseline_offset = 20
-    t = np.arange(0, tr*npulse, tr)
+    velocity_NN = utils.upsample(velocity_NN, velocity_NN.size*100+1, tr).flatten()
+    t = np.arange(0, tr*npulse, tr/100)
     t_with_baseline, v_with_baseline = utils.add_baseline_period(t, velocity_NN, tr*num_pulse_baseline_offset)
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                         vts=v_with_baseline, xarea=xarea, area=area)
     s_raw = tm.simulate_inflow(tr, te, npulse+num_pulse_baseline_offset, w, fa, t1, t2, nslice, alpha, multi_factor, 
-                                x_func_area, multithread=False, enable_logging=True)[:, 0:3]
+                                x_func_area, multithread=True, enable_logging=True)[:, 0:3]
     s = s_raw[num_pulse_baseline_offset:, :]
     return s
 
