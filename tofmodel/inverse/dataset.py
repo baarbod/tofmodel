@@ -13,7 +13,6 @@ import shutil
 import logging
 import multiprocessing
 import sys
-
 import tofmodel.inverse.utils as utils
 from tofmodel.forward import posfunclib as pfl
 from tofmodel.forward import simulate as tm
@@ -82,9 +81,6 @@ def sort_inputs(dir_unsorted, dir_sorted, batch_size):
         
     batch_size : int
         Number of samples to have in sorted batches
-        
-    dirs : dict
-        Directory paths containing batched and sorted inputs.
     """
     
     logger = logging.getLogger(__name__)
@@ -110,7 +106,7 @@ def sort_inputs(dir_unsorted, dir_sorted, batch_size):
         logger.info(f"saved to {inputs_path}")
  
  
-def get_sampling_bounds(frequencies, bounding_gaussians, lower_fact, upper_fact, global_offset):
+def get_sampling_bounds(frequencies, bounding_gaussians, lower_fact, upper_fact, global_offset, kdes=None):
     """Compute lower and upper bounds for velocity amplitude sampling using Gaussians.
 
     Parameters
@@ -139,9 +135,13 @@ def get_sampling_bounds(frequencies, bounding_gaussians, lower_fact, upper_fact,
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2) # gaussian distribution
     Gtotal = np.zeros_like(frequencies)
     for g in bounding_gaussians:
-        amp = np.random.uniform(low=0, high=g['scale'])
+        if kdes:
+            amp = kdes[f"{g['name']}_amp"].resample(1).flatten()
+            fsd = kdes[f"{g['name']}_width"].resample(1).flatten()
+        else:
+            amp = np.random.uniform(low=0, high=g['scale'])
+            fsd = np.random.uniform(*g['fsd_range'])
         freq = np.random.uniform(*g['freq_range'])
-        fsd = np.random.uniform(*g['fsd_range'])
         G = amp * N(frequencies, freq, fsd)
         for harm in g.get('harmonics', []):
             G += amp/harm[1] * N(frequencies, freq*harm[0], fsd)
@@ -218,10 +218,16 @@ def define_input_params(num_sample, param, task_id):
     input_data = []
 
     sp = param.sampling
+    if sp.mode == 'data':
+        with open(param.paths.path_to_velocity_kde, 'rb') as f:
+            kdes = pickle.load(f)
+    elif sp.mode == 'uniform':
+        kdes = None
+    
     ds = param.data_simulation
     frequencies = np.arange(ds.frequency_start, ds.frequency_end, ds.frequency_spacing)
     for _ in range(num_sample):
-        bounds = get_sampling_bounds(frequencies, sp.bounding_gaussians, sp.lower_fact, sp.upper_fact, sp.global_offset)
+        bounds = get_sampling_bounds(frequencies, sp.bounding_gaussians, sp.lower_fact, sp.upper_fact, sp.global_offset, kdes=kdes)
         amplitude = np.random.uniform(bounds[:, 0], bounds[:, 1])
         phase = np.random.uniform(low=0, high=1/frequencies)
         voff = np.random.uniform(low=sp.voffset_lower, high=sp.voffset_upper)
