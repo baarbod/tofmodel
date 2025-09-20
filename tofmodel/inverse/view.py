@@ -35,10 +35,17 @@ def view_sampling(config_path):
     plt.ylabel("Velocity power", fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.4)
 
+    if sampling_param.mode == 'data':
+        with open(param.paths.path_to_velocity_kde, 'rb') as f:
+            kdes = pickle.load(f)
+    elif sampling_param.mode == 'uniform':
+        kdes = None
+    
+
     num_samples = 1000
     for _ in range(num_samples):
         bound_array = get_sampling_bounds(frequencies, sampling_param.bounding_gaussians, 
-                                          sampling_param.lower_fact, sampling_param.upper_fact, sampling_param.global_offset)
+                                          sampling_param.lower_fact, sampling_param.upper_fact, sampling_param.global_offset, kdes=kdes)
         rand_values = np.random.uniform(low=bound_array[:, 0], high=bound_array[:, 1])
         rand_phase = np.random.uniform(low=0, high=1/frequencies)
         v_offset = np.random.uniform(low=sampling_param.voffset_lower,
