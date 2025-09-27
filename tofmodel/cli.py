@@ -5,23 +5,6 @@ from omegaconf import OmegaConf
 import os
 
 
-# examples
-
-# tof view --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --component simulations
-# tof view --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --component sampling
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --taskid 0 --action prepare_inputs
-
-# full pipeline ran locally (wait until each line is finished before running next line)
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --mode sequential --action prepare_inputs
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --action sort_inputs
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --mode sequential --action run_simulations
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --action combine_simulations
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --action cleanup_directories
-# or run everything in one line
-# tof inverse --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml --action run_all
-
-# tof train --epochs 80 --batch 16 --lr 0.00001 --noise_method none --noise_scale 1.0 --exp_name test --config /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/config/config.yml
-
 def main():
     
     # DEFINE PARSERS
@@ -209,11 +192,15 @@ def load_config(path):
 
 
 def setup_directories(param):
-    datasetdir = param.paths.datasetdir
+    output_dir = param.output_dir
+    dataset_name = param.dataset_name
+    datasetdir = os.path.join(output_dir, dataset_name)
     dirs = {
         'batched': os.path.join(datasetdir, 'inputs_batched'),
         'sorted': os.path.join(datasetdir, 'inputs_batched_sorted'),
-        'sim_batched': os.path.join(datasetdir, 'simulations_batched')
+        'sim_batched': os.path.join(datasetdir, 'simulations_batched'),
+        'dataset': datasetdir,
+        'data': os.path.join(output_dir, 'data')
     }
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
