@@ -11,6 +11,7 @@ from functools import partial
 from omegaconf import OmegaConf
 import argparse
 import matplotlib.pyplot as plt
+import json
 from scipy.signal import welch
 
 
@@ -72,7 +73,6 @@ def main():
     plt.tight_layout()
     plt.show()
     
-
     print("Saving results...")
     fig_td.savefig(os.path.join(args.outdir, 'signal_TD_plot.png'), format='png')
     fig_psd.savefig(os.path.join(args.outdir, 'signal_PSD_plot.png'), format='png')
@@ -82,7 +82,17 @@ def main():
 
     sraw_scaled = scale_data(sraw)
     ssim_scaled = scale_data(ssim)
-    signal_error = compute_error(sraw_scaled, ssim_scaled)
+
+    # compute metrics (uses tr to convert lag to seconds)
+    tr = param.scan_param.repetition_time
+    metrics = compute_metrics(sraw_scaled, ssim_scaled, tr=tr, nperseg=256)
+
+    # save metrics
+    save_metrics_json(metrics, os.path.join(args.outdir, "metrics.json"))
+
+    # also save the raw per-timepoint absolute error for compatibility
+    signal_error = np.abs(sraw_scaled[:min(sraw_scaled.shape[0], ssim_scaled.shape[0]), :]
+                         - ssim_scaled[:min(sraw_scaled.shape[0], ssim_scaled.shape[0]), :])
     np.savetxt(os.path.join(args.outdir, 'signal_error.txt'), signal_error)
     
     fig_err, [ax1, ax2, ax3] = plt.subplots(nrows=3, ncols=1)
@@ -116,6 +126,7 @@ def evaluate_output(eval_data_list):
 
 
 def load_data(spath, area_path, param):
+    num_pulse_baseline_offset = param.scan_param.num_pulse_baseline_offset
     s = np.loadtxt(spath)
     A = np.loadtxt(area_path)
     xarea, area = A[:, 0], A[:, 1]
@@ -124,20 +135,18 @@ def load_data(spath, area_path, param):
     x_new = np.linspace(0, 1, new_length)
     xarea_resampled = np.interp(x_new, x_old, xarea)
     area_resampled = np.interp(x_new, x_old, area)
-    return s[20:, :3], xarea_resampled, area_resampled
+    return s[num_pulse_baseline_offset:, :3], xarea_resampled, area_resampled
 
 
 def scale_data(s):
     mean_ref = np.mean(s[:, 0])
     std_ref = np.std(s[:, 0])
-    s_data_for_nn = np.empty_like(s)
-    s_data_for_nn[:, 0] = (s[:, 0] - mean_ref) / std_ref
-    s_data_for_nn[:, 1:] = (s[:, 1:] - mean_ref) / std_ref
-    return s_data_for_nn
+    s_scaled = (s - mean_ref) / std_ref
+    return s_scaled
     
     
 def load_network(state_filename, param):
-    model_state = torch.load(state_filename, map_location=torch.device('cpu'))
+    model_state = torch.load(state_filename, map_location=torch.device('cpu'))['model_state_dict']
     num_input = param.data_simulation.num_input_features
     input_size = param.data_simulation.input_feature_size
     output_size = param.data_simulation.output_feature_size
@@ -167,7 +176,7 @@ def run_forward_model(velocity_NN, xarea, area, param):
     npulse = velocity_NN.size
     multi_factor = param.scan_param.MBF
     alpha = param.scan_param.alpha_list
-    num_pulse_baseline_offset = 20
+    num_pulse_baseline_offset = param.scan_param.num_pulse_baseline_offset
     velocity_NN = utils.upsample(velocity_NN, velocity_NN.size*100+1, tr).flatten()
     t = np.arange(0, tr*npulse, tr/100)
     t_with_baseline, v_with_baseline = utils.add_baseline_period(t, velocity_NN, tr*num_pulse_baseline_offset)
@@ -177,6 +186,73 @@ def run_forward_model(velocity_NN, xarea, area, param):
                                 x_func_area, multithread=True, enable_logging=True)[:, 0:3]
     s = s_raw[num_pulse_baseline_offset:, :]
     return s
+
+
+def compute_metrics(x_ref, x_pred, tr=None, nperseg=256):
+
+    ntime = min(x_ref.shape[0], x_pred.shape[0])
+    x_ref = x_ref[:ntime, :]
+    x_pred = x_pred[:ntime, :]
+
+    nslice = x_ref.shape[1]
+    fs = 1.0 / tr
+    per_slice = {}
+    summary = {}
+    summary_acc = {
+        "MSE": [], "Pearson": [], "R2": [], "PSD_MSE": [], "Lag_sec": []
+    }
+
+    for islice in range(nslice):
+        ref = x_ref[:, islice]
+        pred = x_pred[:, islice]
+        residual = ref - pred
+        mse = np.mean(residual**2)
+        pearson = float(np.corrcoef(ref, pred)[0, 1])
+        ss_res = np.sum((ref - pred) ** 2)
+        ss_tot = np.sum((ref - np.mean(ref)) ** 2)
+        r2 = float(1.0 - ss_res / (ss_tot + 1e-8))
+
+        f_ref, P_ref = welch(ref, fs=fs, nperseg=min(nperseg, len(ref)))
+        f_pred, P_pred = welch(pred, fs=fs, nperseg=min(nperseg, len(pred)))
+        psd_mse = float(np.mean((P_ref - P_pred) ** 2))
+
+        # zero-mean signals for cross-corr
+        r = ref - ref.mean()
+        p = pred - pred.mean()
+        corr = np.correlate(r, p, mode='full')
+        lag_idx = int(np.argmax(corr) - (len(ref) - 1))
+        if tr is not None:
+            lag_sec = float(lag_idx * tr)
+        else:
+            lag_sec = int(lag_idx)  # samples
+
+        per_slice[f"slice{islice+1}"] = {
+            "MSE": float(mse),
+            "Pearson": None if np.isnan(pearson) else float(pearson),
+            "R2": float(r2),
+            "PSD_MSE": float(psd_mse),
+            "Lag_sec": float(lag_sec)
+        }
+
+        # append to summary accumulators
+        summary_acc["MSE"].append(mse)
+        summary_acc["Pearson"].append(np.nan if np.isnan(pearson) else pearson)
+        summary_acc["R2"].append(r2)
+        summary_acc["PSD_MSE"].append(psd_mse)
+        summary_acc["Lag_sec"].append(lag_sec)
+
+    # compute summary (mean across channels)
+    for k, vals in summary_acc.items():
+        vals = np.array(vals, dtype=float)
+        summary[k + "_mean"] = float(np.nanmean(vals))
+        summary[k + "_std"] = float(np.nanstd(vals))
+
+    return {"per_slice": per_slice, "summary": summary}
+
+
+def save_metrics_json(metrics_dict, outpath):
+    with open(outpath, "w") as f:
+        json.dump(metrics_dict, f, indent=2)
 
 
 if __name__ == "__main__":
