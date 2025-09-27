@@ -3,12 +3,11 @@
 from multiprocessing import Pool
 import multiprocessing.shared_memory as msm
 from functools import partial
-from omegaconf import OmegaConf
 from scipy.interpolate import interp1d
-import time
 import numpy as np
 import pickle
 import os
+import csv
 import shutil
 import logging
 import multiprocessing
@@ -23,13 +22,7 @@ logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 
 def setup_worker_logger(log_level=logging.INFO):
-    """Initialize logger for worker processes to log to stdout.
-
-    Parameters
-    ----------
-    log_level : int
-        Logging verbosity level (e.g., logging.INFO).
-    """
+    """Initialize logger for worker processes to log to stdout."""
     
     logger = multiprocessing.get_logger()
     handler = logging.StreamHandler(sys.stdout)
@@ -41,23 +34,11 @@ def setup_worker_logger(log_level=logging.INFO):
     
     
 def prepare_inputs(param, dirs, task_id):
-    """Generate and save simulation input samples with initial proton positions.
-
-    Parameters
-    ----------
-    param : OmegaConf
-        Configuration with simulation and sampling parameters.
-    
-    dirs : dict
-        Dictionary containing paths for storing intermediate files.
-
-    task_id : int
-        ID number for this task/batch.
-    """
+    """Generate and save simulation input samples with initial proton positions."""
     
     ds_param = param.data_simulation
     batch_size = ds_param.num_samples // ds_param.num_batches
-    input_data_batch = define_input_params(batch_size, param, task_id)
+    input_data_batch = define_input_params(batch_size, param, dirs, task_id)
     num_usable_cpu = len(os.sched_getaffinity(0))
     num_workers = min(batch_size, num_usable_cpu) 
     with Pool(processes=num_workers, initializer=setup_worker_logger) as pool:
@@ -69,19 +50,7 @@ def prepare_inputs(param, dirs, task_id):
     
 
 def sort_inputs(dir_unsorted, dir_sorted, batch_size):
-    """Load all input batches, sort them by proton count, and redistribute into sorted batches.
-
-    Parameters
-    ----------
-    dir_unsorted : str
-        Path to directory with unsorted batches
-
-    dir_sorted : str
-        Path to directory to put sorted batches
-        
-    batch_size : int
-        Number of samples to have in sorted batches
-    """
+    """Load all input batches, sort them by proton count, and redistribute into sorted batches."""
     
     logger = logging.getLogger(__name__)
     inputs_all_samples = []
@@ -107,30 +76,7 @@ def sort_inputs(dir_unsorted, dir_sorted, batch_size):
  
  
 def get_sampling_bounds(frequencies, bounding_gaussians, lower_fact, upper_fact, global_offset, kdes=None):
-    """Compute lower and upper bounds for velocity amplitude sampling using Gaussians.
-
-    Parameters
-    ----------
-    frequencies : numpy.ndarray
-        Array of frequencies to use.
-    
-    bounding_gaussians: list
-        List of dicts containing parameters for each Gaussian.
-        
-    lower_fact: float
-        Factor to multiply lower boun.
-
-    upper_fact: float
-        Factor to multiply upper bound.
-        
-    global_offset: float
-        Factor to add to upper bound.
-        
-    Returns
-    -------
-    bounds : numpy.ndarray
-        Array of shape (len(frequencies), 2) with lower and upper bounds.
-    """
+    """Compute lower and upper bounds for velocity amplitude sampling using Gaussians."""
     
     N = lambda x, u, s: np.exp((-0.5) * ((x-u)/s)**2) # gaussian distribution
     Gtotal = np.zeros_like(frequencies)
@@ -151,19 +97,8 @@ def get_sampling_bounds(frequencies, bounding_gaussians, lower_fact, upper_fact,
     return np.column_stack((lower, upper))
 
 
-def define_sample_area(param):
-    """Generate cross-sectional area arrays.
-
-    Parameters
-    ----------
-    param : OmegaConf
-        Configuration parameters for sampling and simulation.
-
-    Returns
-    -------
-    input_data : tuple
-        (xarea, area). areas cm^2 at each x position
-    """
+def define_sample_area(param, dirs=None):
+    """Generate cross-sectional area arrays."""
     
     logger = logging.getLogger(__name__)
     sampling_param = param.sampling
@@ -172,16 +107,14 @@ def define_sample_area(param):
     if area_param.mode == 'straight_tube':
         x = np.linspace(-3, 3, simulation_param.output_feature_size)
         a = np.ones(simulation_param.output_feature_size)
-    elif area_param.mode == 'custom':
-        area_data = np.loadtxt(area_param.path_to_custom)
-        x, a = area_data[:, 0], area_data[:, 1]
     elif area_param.mode == 'collection':
-        files = sorted(os.listdir(area_param.path_to_collection))
+        path_to_collection = os.path.join(dirs['data'], 'area_collection')
+        files = sorted(os.listdir(path_to_collection))
         if not files:
-            logger.error(f"No area files found in {area_param.path_to_collection}")
-            raise FileNotFoundError(f"No valid area files in {area_param.path_to_collection}")
+            logger.error(f"No area files found in {path_to_collection}")
+            raise FileNotFoundError(f"No valid area files in {path_to_collection}")
         selected_area_file = np.random.choice(files)
-        selected_area_path = os.path.join(area_param.path_to_collection, selected_area_file)
+        selected_area_path = os.path.join(path_to_collection, selected_area_file)
         area_data = np.loadtxt(selected_area_path)
         x, a = area_data[:, 0], area_data[:, 1]
         scale = np.random.uniform(low=area_param.area_scale_lower, high=area_param.area_scale_upper)
@@ -195,31 +128,15 @@ def define_sample_area(param):
     return resample(x, a, simulation_param.input_feature_size)
     
     
-def define_input_params(num_sample, param, task_id):
-    """Generate randomized input parameter dictionaries for simulation.
-
-    Parameters
-    ----------
-    num_sample : int
-        Number of samples to generate.
-    
-    param : OmegaConf
-        Configuration parameters for sampling and simulation.
-    
-    task_id : int
-        Task identifier for this batch.
-
-    Returns
-    -------
-    input_data : list of dict
-        List of dictionaries with simulation parameters per sample.
-    """
+def define_input_params(num_sample, param, dirs, task_id):
+    """Generate randomized input parameter dictionaries for simulation."""
     
     input_data = []
 
     sp = param.sampling
     if sp.mode == 'data':
-        with open(param.paths.path_to_velocity_kde, 'rb') as f:
+        path_to_velocity_kde = os.path.join(dirs['data'], 'velocity_kde.pkl')
+        with open(path_to_velocity_kde, 'rb') as f:
             kdes = pickle.load(f)
     elif sp.mode == 'uniform':
         kdes = None
@@ -231,7 +148,7 @@ def define_input_params(num_sample, param, task_id):
         amplitude = np.random.uniform(bounds[:, 0], bounds[:, 1])
         phase = np.random.uniform(low=0, high=1/frequencies)
         voff = np.random.uniform(low=sp.voffset_lower, high=sp.voffset_upper)
-        xarea, area = define_sample_area(param)
+        xarea, area = define_sample_area(param, dirs=dirs)
         
         batch_size = ds.num_samples // ds.num_batches
         Xshape = (batch_size, ds.num_input_features, ds.input_feature_size)
@@ -256,21 +173,7 @@ def define_input_params(num_sample, param, task_id):
 
 
 def compute_sample_init_positions(isample, input_data):
-    """Compute initial spatial positions for protons based on velocity and area profile.
-
-    Parameters
-    ----------
-    isample : int
-        Dummy argument needed for enumerate to work when passing to Pool call.
-
-    input_data : dict
-        Dictionary of parameters for the sample.
-
-    Returns
-    -------
-    x0_array : numpy.ndarray
-        Array of initial proton positions (in cm).
-    """
+    """Compute initial spatial positions for protons based on velocity and area profile."""
 
     p = input_data['param'].scan_param
     t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
@@ -287,62 +190,65 @@ def compute_sample_init_positions(isample, input_data):
     return np.arange(lb, ub + 0.01, 0.01)
 
 
-def simulate_parameter_set(isample, inputs):
-    """Simulate inflow signal for one sample using its parameter set and write to shared memory array.
-
-    Parameters
-    ----------
-    isample : int
-        Sample index in the batch used for indexing into shared memory arrays.
-
-    inputs : dict
-        Contains 'input_data' and other metadata.
-
-    Returns
-    -------
-    t_start, t_end : float
-        Start and end times of the simulation used for reporting.
-    """
-    
-    t_start = time.time()
+def simulate_parameter_set(isample, inputs, batch_dir):
+    """Simulate inflow signal for one sample using its parameter set and write to shared memory array."""
+    logger = multiprocessing.get_logger()
     input_data = inputs['input_data']
-    p = input_data['param'].scan_param
-    Xshm = msm.SharedMemory(name=f"Xarray{input_data['task_id']}")
-    Yshm = msm.SharedMemory(name=f"Yarray{input_data['task_id']}")
-    X = np.ndarray(input_data['Xshape'], dtype=input_data['Xtype'], buffer=Xshm.buf)
-    Y = np.ndarray(input_data['Yshape'], dtype=input_data['Ytype'], buffer=Yshm.buf)
-    t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
-    v = utils.define_velocity_fourier(t, input_data['velocity_input'], 
-                                      input_data['frequencies'], input_data['rand_phase'], 
-                                      input_data['v_offset'])
-    t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
-    x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
-                          vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
-    s_raw = tm.simulate_inflow(p.repetition_time, p.echo_time, p.num_pulse+p.num_pulse_baseline_offset, 
-                               p.slice_width, p.flip_angle, p.t1_time, p.t2_time, p.num_slice, p.alpha_list, 
-                               p.MBF, x_func_area, multithread=False)[:, 0:3]
-    s = s_raw[p.num_pulse_baseline_offset:, :]
-    X[isample,0:3,:] = s.T
-    X[isample,3,:], X[isample,4,:] = input_data['xarea_sample'], input_data['area_sample']
-    Y[isample, 0, :] = utils.downsample(v, input_data['Yshape'][2])
-    t_end = time.time()
-    return (t_start, t_end)
+    
+    # Create batch subdirectory
+    batch_subdir = os.path.join(batch_dir, f"batch_{input_data['task_id']:03}")
+    os.makedirs(batch_subdir, exist_ok=True)
+    progress_file = os.path.join(batch_subdir, "progress.csv")
+    
+    # File for this sample
+    sample_file = os.path.join(batch_subdir, f"sample_{isample:03}.pkl")
+    
+    try:
+        logger.info(f"Starting simulation {isample} in batch {input_data['task_id']}")
+        sys.stdout.flush()
+        p = input_data['param'].scan_param
+        t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
+        v = utils.define_velocity_fourier(t, input_data['velocity_input'], 
+                                        input_data['frequencies'], input_data['rand_phase'], 
+                                        input_data['v_offset'])
+        t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
+        x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
+                            vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
+        s_raw = tm.simulate_inflow(p.repetition_time, p.echo_time, p.num_pulse+p.num_pulse_baseline_offset, 
+                                p.slice_width, p.flip_angle, p.t1_time, p.t2_time, p.num_slice, p.alpha_list, 
+                                p.MBF, x_func_area, multithread=False)[:, 0:3]
+        s = s_raw[p.num_pulse_baseline_offset:, :]
+        
+        v_downsampled = utils.downsample(v, input_data['param'].data_simulation.output_feature_size)
+        
+        # ---- save sample ----
+        with open(sample_file, "wb") as f:
+            pickle.dump({
+                'X': s,
+                'v': v_downsampled,
+                'xarea': input_data['xarea_sample'],
+                'area': input_data['area_sample'],
+                'input': input_data
+            }, f)
+        
+        # ---- update progress CSV ----
+        with open(progress_file, "a", newline='') as pf:
+            writer = csv.writer(pf)
+            writer.writerow([isample, s.shape[0], "done"])
+
+        logger.info(f"Finished simulation {isample} in batch {input_data['task_id']}, saved to {sample_file}")
+        sys.stdout.flush()
+        
+    except Exception as e:
+        logger.error(f"Simulation {isample} in batch {input_data['task_id']} failed: {e}")
+        sys.stdout.flush()
+        with open(progress_file, "a", newline='') as pf:
+            writer = csv.writer(pf)
+            writer.writerow([isample, 0, "error"])
 
 
 def run_simulations(param, dirs, task_id):
-    """Run simulations for a task batch and saved the resulting filled shared memory arrays.
-
-    Parameters
-    ----------
-    param : OmegaConf
-        Configuration parameters for simulation.
-    
-    dirs : dict
-        Dictionary of directory paths for input/output.
-
-    task_id : int
-        Task number to identify which input batch to run.
-    """
+    """Run simulations for a task batch and saved the resulting filled shared memory arrays."""
     
     logger = logging.getLogger(__name__)
     input_file = None
@@ -356,91 +262,71 @@ def run_simulations(param, dirs, task_id):
         inputs_batch = pickle.load(f)
     logger.info(f"loaded {input_file}")
     batch_size = len(inputs_batch)
-    Xshape = (batch_size, param.data_simulation.num_input_features, param.data_simulation.input_feature_size)
-    Yshape = (batch_size, param.data_simulation.num_output_features, param.data_simulation.output_feature_size)
-    X = np.zeros(Xshape)
-    Y = np.zeros(Yshape)
-    X_shared = utils.create_shared_memory(X, name=f"Xarray{task_id}")
-    Y_shared = utils.create_shared_memory(Y, name=f"Yarray{task_id}")
+
     num_usable_cpu = len(os.sched_getaffinity(0))
-    num_workers = min(batch_size, num_usable_cpu) 
+    num_workers = min(batch_size, num_usable_cpu)
+    logger.info(f"Running {batch_size} samples on {num_workers} workers")
     with Pool(processes=num_workers, initializer=setup_worker_logger) as pool:
-        times = pool.starmap(simulate_parameter_set, enumerate(inputs_batch))
-    start_times, end_times = zip(*times)
-    start_times, end_times = np.array(start_times), np.array(end_times)
-    tref = np.min(start_times)
-    start_times -= tref
-    end_times -= tref
-    logger.info(f"summary of timing (relative to start of first simulation) across {len(times)} simulations")
-    for idx, (tstart, tend) in enumerate(zip(start_times, end_times)):
-        logger.info(f"  simulation: {idx}, start time :{tstart:.3f} seconds, total simulation time: {(tend - tstart):.3f} seconds")
-    total_times = end_times - start_times
-    logger.info(f"Mean simulation time: {np.mean(total_times):.3f} +- {np.std(total_times):.3f}")
-    config_path = os.path.join(dirs['sim_batched'], 'config_used.yml')
-    OmegaConf.save(config=OmegaConf.create(param), f=config_path)
-    output_path = os.path.join(dirs['sim_batched'], f"output_{Xshape[0]}_samples_task{task_id:03}" '.pkl')
-    logger.info('Saving updated training_data set...')
-    with open(output_path, "wb") as f:
-        pickle.dump([np.ndarray(X.shape, dtype=X.dtype, buffer=X_shared.buf), 
-                     np.ndarray(Y.shape, dtype=Y.dtype, buffer=Y_shared.buf), inputs_batch], f)
-    logger.info('Finished saving.')
-    utils.close_shared_memory(name=X_shared.name)
-    utils.close_shared_memory(name=Y_shared.name)
+        pool.starmap(
+            partial(simulate_parameter_set, batch_dir=dirs['sim_batched']),
+            list(enumerate(inputs_batch))
+        )
+    logger.info(f"Batch {task_id} completed. Results in {os.path.join(dirs['sim_batched'], f'batch_{task_id:03}')}")
 
 
 def combine_simulations(param, dirs):
-    """Combine all simulated batches into one dataset and save to output directory.
-
-    Parameters
-    ----------
-    param : OmegaConf
-        Configuration with path to final output directory.
-    
-    dirs : dict
-        Directory paths containing simulation results.
-    """
+    """Combine all simulated batches into one dataset and save to output directory."""
     
     logger = logging.getLogger(__name__)
-    datasetdir = param.paths.datasetdir
-    xs, ys, ins = [],[],[]
-    config_flag = 0
-    sim_files = os.listdir(dirs['sim_batched'])
-    if not sim_files:
-        logger.warning(f"No files found in {dirs['sim_batched']}. Exiting.")
-    else:
-        for file in sim_files:
-            if file.endswith('.pkl'):
-                filepath = os.path.join(dirs['sim_batched'], file)
-                if os.path.isfile(filepath):
-                    with open(filepath, "rb") as f:
-                        x, y, b = pickle.load(f)
-                    xs.append(x); ys.append(y); ins.extend(b)
-                    logger.info(f"combined {file}")
-            if file.endswith('_used.yml') and not config_flag:
-                filepath = os.path.join(dirs['sim_batched'], file)
-                shutil.move(filepath, datasetdir)
-                config_flag = 1
-    if xs and ys:
-        logger.info(f'Combined {len(xs)} batches')   
-        logger.info('Saving updated training_data set...')   
-        filename = f"output_{len(xs)*y.shape[0]}_samples.pkl"
-        filepath = os.path.join(datasetdir, filename)
-        with open(filepath, "wb") as f:
-            pickle.dump([np.concatenate(xs, axis=0) , np.concatenate(ys, axis=0), ins], f)
-        logger.info('Finished saving.')   
-    else:
-        logger.warning("No valid .pkl files processed. Nothing to save.")
+    X_list, Y_list, inputs_list = [], [], []
+
+    # Find all batch directories
+    batch_dirs = sorted(
+        [d for d in os.listdir(dirs['sim_batched']) if d.startswith("batch_")]
+    )
+
+    if not batch_dirs:
+        logger.warning(f"No batch directories found in {dirs['sim_batched']}. Nothing to combine.")
+        return
+
+    # Load all per-sample .pkl files
+    for batch_name in batch_dirs:
+        batch_subdir = os.path.join(dirs['sim_batched'], batch_name)
+        sample_files = sorted(f for f in os.listdir(batch_subdir) if f.endswith(".pkl"))
+        for sf in sample_files:
+            sample_path = os.path.join(batch_subdir, sf)
+            try:
+                with open(sample_path, "rb") as f:
+                    data = pickle.load(f)
+                xx = np.concatenate((data['X'], 
+                                     np.expand_dims(data['xarea'], axis=1), 
+                                     np.expand_dims(data['area'], axis=1)), axis=1)
+                X_list.append(np.array(xx, copy=False))
+                Y_list.append(np.array(data['v'], copy=False))
+                inputs_list.append(data['input'])
+            except Exception as e:
+                logger.warning(f"Failed to load {sample_path}: {e}")
+
+    if not X_list or not Y_list:
+        logger.warning("No valid samples found. Exiting without saving.")
+        return
+
+    # Concatenate all arrays
+    X_final = np.stack(X_list, axis=0)
+    Y_final = np.stack(Y_list, axis=0)
+    total_samples = X_final.shape[0]
+
+    # Save combined dataset
+    output_file = os.path.join(dirs['dataset'], f"output_{total_samples}_samples.pkl")
+    with open(output_file, "wb") as f:
+        pickle.dump([X_final, Y_final, inputs_list], f)
+
+    logger.info(f"Combined dataset saved to {output_file}")
+    logger.info(f"X shape: {X_final.shape}, Y shape: {Y_final.shape}, inputs: {len(inputs_list)}")
 
 
 def cleanup_directories(dirs):
-    """Remove temporary directories used during simulation.
-
-    Parameters
-    ----------
-    dirs : dict
-        Dictionary of directory paths to remove.
-    """
-    
+    """Remove temporary directories used during simulation."""
     logger = logging.getLogger(__name__)
     for d in dirs.values():
         shutil.rmtree(d, ignore_errors=True)
