@@ -17,7 +17,7 @@ import json
 
 
 def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None, 
-              gauss_low=0.01, gauss_high=0.1, noise_scale=1.5, exp_name='',
+              gauss_low=0.01, gauss_high=0.1, noise_scale=0.5, exp_name='',
               patience=20, min_delta=1e-5, warmup_epochs=10):
     
     output_dir = param.output_dir
@@ -131,7 +131,7 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
     print(f"Best validation loss: {best_loss}")
 
 
-def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, scalemax=1.5):
+def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, scalemax=0.5):
     
     output_dir = param.output_dir
     dataset_name = param.dataset_name
@@ -164,17 +164,11 @@ def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, sca
     else:
         print(f"no noise being added")
     
-    # # zscore slice signals relative to first slice
-    # ref = X[:, 0, :]  
-    # mean_ref = np.mean(ref, axis=1, keepdims=True)  
-    # std_ref = np.std(ref, axis=1, keepdims=True)    
-    # X[:, 0:3, :] = (X[:, 0:3, :] - mean_ref[:, None, :]) / std_ref[:, None, :]
+    # scale signals 
     for i in range(X.shape[0]):
-        # select first 3 channels for this sample: shape (time, 3)
         to_scale = X[i, 0:3, :].T  # transpose to (time, channels)
         scaled = eval.scale_data(to_scale).T  # scale and transpose back
         X[i, 0:3, :] = scaled  # overwrite in-place
-    
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
     if torch.cuda.is_available():
