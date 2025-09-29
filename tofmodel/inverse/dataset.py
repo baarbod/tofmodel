@@ -278,7 +278,7 @@ def combine_simulations(param, dirs):
     """Combine all simulated batches into one dataset and save to output directory."""
     
     logger = logging.getLogger(__name__)
-    X_list, Y_list, inputs_list = [], [], []
+    X_final, y_final, inputs_final = [], [], []
 
     # Find all batch directories
     batch_dirs = sorted(
@@ -301,29 +301,39 @@ def combine_simulations(param, dirs):
                 xx = np.concatenate((data['X'], 
                                      np.expand_dims(data['xarea'], axis=1), 
                                      np.expand_dims(data['area'], axis=1)), axis=1)
-                X_list.append(np.array(xx, copy=False))
-                Y_list.append(np.array(data['v'], copy=False))
-                inputs_list.append(data['input'])
+                
+                xx = np.swapaxes(xx, -1, -2)  
+                yy = np.expand_dims(data['v'], axis=0)  
+
+                # Filter NaNs and Infs
+                if np.isnan(xx).any() or np.isinf(xx).any():
+                    continue  # skip invalid sample
+                
+                # Append to final lists
+                X_final.append(xx)
+                y_final.append(yy)
+                inputs_final.append(data['input'])
+                
             except Exception as e:
                 logger.warning(f"Failed to load {sample_path}: {e}")
 
-    if not X_list or not Y_list:
+    if not X_final:
         logger.warning("No valid samples found. Exiting without saving.")
         return
 
-    # Concatenate all arrays
-    X_final = np.stack(X_list, axis=0)
-    Y_final = np.stack(Y_list, axis=0)
+    # Stack data
+    X_final = np.stack(X_final, axis=0)  
+    y_final = np.stack(y_final, axis=0) 
     total_samples = X_final.shape[0]
 
     # Save combined dataset
     output_file = os.path.join(dirs['dataset'], f"output_{total_samples}_samples.pkl")
     with open(output_file, "wb") as f:
-        pickle.dump([X_final, Y_final, inputs_list], f)
+        pickle.dump([X_final, y_final, inputs_final], f)
 
     logger.info(f"Combined dataset saved to {output_file}")
-    logger.info(f"X shape: {X_final.shape}, Y shape: {Y_final.shape}, inputs: {len(inputs_list)}")
-
+    logger.info(f"X shape: {X_final.shape}, y shape: {y_final.shape}, inputs: {len(inputs_final)}")
+    
 
 def cleanup_directories(dirs):
     """Remove temporary directories used during simulation."""
