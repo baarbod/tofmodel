@@ -138,11 +138,20 @@ def load_data(spath, area_path, param):
     return s[num_pulse_baseline_offset:, :3], xarea_resampled, area_resampled
 
 
-def scale_data(s):
-    mean_ref = np.mean(s[:, 0])
-    std_ref = np.std(s[:, 0])
-    s_scaled = (s - mean_ref) / std_ref
-    return s_scaled
+def scale_data(s, bottom_pct=2.5, top_pct=2.5):
+    def mean_pct_portion(x, pct, fromtop=False):
+        x_sorted = np.sort(x)
+        if fromtop:
+            x_sorted = x_sorted[::-1]
+        n = max(1, round(len(x_sorted) * pct / 100))
+        return np.mean(x_sorted[:n])
+    s_copy = s.copy()
+    for ch in range(s_copy.shape[1]):
+        baseline = mean_pct_portion(s_copy[:, ch], bottom_pct)
+        s_copy[:, ch] -= baseline
+    top_val = mean_pct_portion(s_copy[:, 0], top_pct, fromtop=True)
+    s_copy /= top_val
+    return s_copy
     
     
 def load_network(state_filename, param):
