@@ -29,11 +29,10 @@ pip install -e .
 
 #### Step 1 - CONFIGURATION
 
-An example configuration file is provided (config.yml). There are groups of parameters that will be described below. <br />
+An example configuration file is provided (config.yml). There are groups of parameters described below. <br />
 **scan_param**: Parameters of the scanner. This should be identical to what was used when acquiring the fMRI data that will later on be used for inferring velocities. <br />
 **data_simulation**: Control dimensions of the synthetic dataset and how it is batched. <br />
 **sampling**: Define parameters for sampling the forward model input data. Here you control the flow dynamics and cross-sectional areas included in the dataset. <br />
-**paths**: Paths you want to use.
 
 #### Step 2 - RUNNING PIPELINE
 
@@ -52,13 +51,12 @@ Or you can run all the steps with one command:
 tof inverse --config config.yml --action run_all
 ```
 ```prepare_inputs``` and ```run_simulations``` are excecuted in batches. <br />```--mode sequential``` 
-will run all batches in a loop locally. <br />```--mode singletask --taskid $ID``` 
+will run all batches in a loop locally and is the default. <br />```--mode singletask --taskid $ID``` 
 will run only a particular batch to allow for passing the taskid via a job scheduler. If using a scheduler, set up scripts to run each step individually and wait for each step to finish before moving to the next.
 
 #### Step 3 - TRAINING THE NETWORK
 ```bash
-tof train --epochs $NUM_EPOCH --batch $BATCH_SIZE --lr $LEARNING_RATE \
-          --noise_method $NOISE_METHOD --noise_scale $NOISE_SCALE --exp_name $NAME --config config.yml
+tof train --dataset $DATASET_PATH --epochs $NUM_EPOCH --batch $BATCH_SIZE --lr $LEARNING_RATE 
 ```
 ## EXAMPLE
 
