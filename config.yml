@@ -1,17 +1,23 @@
 
+# output_dir: /path/to/output/folder # all outputs will be defined relative to this directory
+output_dir: /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/folder # all outputs will be defined relative to this directory
+dataset_name: dataset
+n_dataset_split: 0
+nslice_to_use: 4
+
 # parameters used in the fMRI acquisition protocol
 scan_param:
-  slice_width: 0.25
-  repetition_time: 0.5
-  echo_time: 0.03
-  flip_angle: 45
-  t1_time: 4
-  t2_time: 1.5
+  slice_width: 0.25 # cm
+  repetition_time: 0.5 # seconds
+  echo_time: 0.03 # seconds
+  flip_angle: 45 # degrees
+  t1_time: 4 # seconds
+  t2_time: 1.5 # seconds
   num_slice: 10
-  num_pulse: -1
-  num_pulse_baseline_offset: -1
+  num_pulse: 300
+  num_pulse_baseline_offset: 20
   MBF: 2
-  alpha_list:
+  alpha_list: # seconds
     - 0
     - 0.1
     - 0.2
@@ -30,9 +36,9 @@ data_simulation:
   frequency_spacing: 0.01
   num_batches: 100
   num_input_features: 5
-  input_feature_size: 200
+  input_feature_size: 300
   num_output_features: 1
-  output_feature_size: 200
+  output_feature_size: 300
   num_samples: 1000
   Xtype: float64
   Ytype: float64
@@ -40,27 +46,29 @@ data_simulation:
 # parameters to define how the dynamics of the flows are sampled
 sampling:
 
+  mode: uniform 
+
   bounding_gaussians:
     - name: slow
-      range: [0.035, 0.065]
+      freq_range: [0.035, 0.065]
       scale: 0.1
-      fsd: 0.015
+      fsd_range: [0.005, 0.03]
     - name: breath
-      range: [0.1, 0.3]
+      freq_range: [0.1, 0.3]
       scale: 0.3
-      fsd: 0.002
+      fsd_range: [0.002, 0.01]
       harmonics: # first element is the frequency multiplier, second element is the amplitude divisor
         - [2, 3]
         - [3, 6]
     - name: cardiac
-      range: [0.8, 1.0]
+      freq_range: [0.8, 1.0]
       scale: 0.3
-      fsd: 0.0075
+      fsd_range: [0.0075, 0.03]
 
   global_offset: 0.01
   global_lower_bound: 0
-  upper_fact: 1.4
-  lower_fact: 0.6
+  upper_fact: 1.2
+  lower_fact: 0.8
 
   voffset_lower: 0.0
   voffset_upper: 0.0
@@ -71,9 +79,6 @@ sampling:
 
     mode: 'straight_tube' # options are ['straight_tube', 'custom', 'collection']
 
-    # specific parameters only for "custom" mode
-    path_to_custom: /path/to/custom_area.txt # column 1 = positions in cm, column 2 = areas in cm^2 
-
     # specific parameters only for "collection" mode
     path_to_collection: /path/to/area_collection # folder containing area.txt files
     area_scale_lower: 0.8
@@ -81,9 +86,3 @@ sampling:
     slc1_offset_lower: -1.0 # cm
     slc1_offset_upper: 1.0 # cm
 
-paths:
-  rootdir: /path/to/rootdir
-  datasetdir: /path/to/datasetdir
-  outdir: /path/to/outdir
-  path_to_pca_model: /path/to/pca_model.pkl
-  path_to_noise_data: /path/to/noise_data.pkl
