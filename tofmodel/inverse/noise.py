@@ -39,10 +39,12 @@ def sample_noise(X, model, nslice=3):
     return noise_reshaped
 
 
-def scale_noise(X, noise, nslice=3, scalemax=1.5):
+def scale_noise(X, noise, nslice=3, scalemax=1.0, scaleoverride=None):
     noise_scaled = noise.copy()
     slc1_max = X[:, 0, :].max(axis=1)
     scale = np.random.uniform(0, scalemax, size=X.shape[0])
+    if scaleoverride:
+        scale = scaleoverride
     scale_fact = scale * slc1_max
     for islice in range(nslice):
         noise_scaled[:, islice, :] /= noise_scaled[:, islice, :].max()
