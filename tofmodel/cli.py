@@ -28,7 +28,8 @@ def main():
                         ], help="Operation to perform")
     
     train_parser = subparsers.add_parser("train", help="train the model on the simulated dataset")
-    train_parser.add_argument("--config", type=str, required=True, help="path to config yml file")
+    train_parser.add_argument("--dataset", type=str, required=True, help="path to dataset file")
+    train_parser.add_argument("--noisedir", type=str, required=True, help="path to directory where noise files are")
     train_parser.add_argument("--epochs", type=int, required=True, help="number of training epochs")
     train_parser.add_argument("--batch", type=int, required=True, help="batch size")
     train_parser.add_argument("--lr", type=float, required=True, help="learning rate for optimizer")
@@ -88,8 +89,7 @@ def run_view(args):
 
 def run_train(args):
     from tofmodel.inverse import train
-    param = load_config(args.config)
-    train.train_net(param, epochs=args.epochs, batch=args.batch, lr=args.lr, noise_method=args.noise_method, 
+    train.train_net(args.dataset, args.noisedir, epochs=args.epochs, batch=args.batch, lr=args.lr, noise_method=args.noise_method, 
               gauss_low=args.gauss_low, gauss_high=args.gauss_high, noise_scale=args.noise_scale, exp_name=args.exp_name)
     
     
@@ -107,9 +107,14 @@ def print_message(action, mode, taskid, param):
 def run_inverse(args):
     param = load_config(args.config)
 
-    # override some parameters
-    param.scan_param.num_pulse = param.data_simulation.input_feature_size
-    param.scan_param.num_pulse_baseline_offset = 20
+    if (
+        param.scan_param.num_pulse != param.data_simulation.input_feature_size
+        or param.scan_param.num_pulse != param.data_simulation.output_feature_size
+    ):
+        raise ValueError(
+            f"num_pulse ({param.scan_param.num_pulse}) must match both "
+            f"input ({param.data_simulation.input_feature_size}) and output ({param.data_simulation.output_feature_size}) feature sizes"
+        )
 
     dirs = setup_directories(param)
     action = args.action
