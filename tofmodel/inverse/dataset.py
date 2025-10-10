@@ -216,7 +216,7 @@ def simulate_parameter_set(isample, inputs, batch_dir):
                             vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
         s_raw = tm.simulate_inflow(p.repetition_time, p.echo_time, p.num_pulse+p.num_pulse_baseline_offset, 
                                 p.slice_width, p.flip_angle, p.t1_time, p.t2_time, p.num_slice, p.alpha_list, 
-                                p.MBF, x_func_area, multithread=False)[:, 0:3]
+                                p.MBF, x_func_area, multithread=False)[:, :input_data['param'].nslice_to_use]
         s = s_raw[p.num_pulse_baseline_offset:, :]
         
         v_downsampled = utils.downsample(v, input_data['param'].data_simulation.output_feature_size)
@@ -325,15 +325,32 @@ def combine_simulations(param, dirs):
     X_final = np.stack(X_final, axis=0)  
     y_final = np.stack(y_final, axis=0) 
     total_samples = X_final.shape[0]
-
-    # Save combined dataset
-    output_file = os.path.join(dirs['dataset'], f"output_{total_samples}_samples.pkl")
-    with open(output_file, "wb") as f:
-        pickle.dump([X_final, y_final, inputs_final], f)
-
-    logger.info(f"Combined dataset saved to {output_file}")
-    logger.info(f"X shape: {X_final.shape}, y shape: {y_final.shape}, inputs: {len(inputs_final)}")
     
+    if getattr(param, "n_dataset_split", 0) > 0:
+        N = param.n_dataset_split
+        div = total_samples // N
+
+        for k in range(1, N + 1):
+            n_keep = div * k if k < N else total_samples
+            rand_ind = np.random.choice(total_samples, n_keep, replace=False)
+            X_sub = X_final[rand_ind]
+            y_sub = y_final[rand_ind]
+            inputs_sub = [inputs_final[i] for i in rand_ind]
+
+            sub_file = os.path.join(dirs['dataset'], f"dataset_{n_keep}_samples.pkl")
+            with open(sub_file, "wb") as f:
+                pickle.dump([X_sub, y_sub, inputs_sub], f)
+
+            logger.info(f"Saved split {k}/{N}: {sub_file} "
+                        f"(X: {X_sub.shape}, y: {y_sub.shape}, inputs: {len(inputs_sub)})")
+    else:
+        # Save combined dataset
+        output_file = os.path.join(dirs['dataset'], f"dataset_{total_samples}_samples.pkl")
+        with open(output_file, "wb") as f:
+            pickle.dump([X_final, y_final, inputs_final], f)
+
+        logger.info(f"Combined dataset saved to {output_file}")
+        logger.info(f"X shape: {X_final.shape}, y shape: {y_final.shape}, inputs: {len(inputs_final)}")
 
 def cleanup_directories(dirs):
     """Remove temporary directories used during simulation."""
