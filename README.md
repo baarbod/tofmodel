@@ -44,7 +44,6 @@ tof inverse --config config.yml --mode sequential --action prepare_inputs
 tof inverse --config config.yml --action sort_inputs
 tof inverse --config config.yml --mode sequential --action run_simulations
 tof inverse --config config.yml --action combine_simulations
-tof inverse --config config.yml --action cleanup_directories
 ```
 Or you can run all the steps with one command:
 ```bash
