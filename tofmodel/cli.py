@@ -28,16 +28,16 @@ def main():
                         ], help="Operation to perform")
     
     train_parser = subparsers.add_parser("train", help="train the model on the simulated dataset")
-    train_parser.add_argument("--dataset", type=str, required=True, help="path to dataset file")
-    train_parser.add_argument("--noisedir", type=str, required=True, help="path to directory where noise files are")
+    train_parser.add_argument("--dataset", type=str, required=True, help="path to dataset .pkl file")
+    train_parser.add_argument("--noisedir", type=str, required=False, help="path to directory where noise files are")
     train_parser.add_argument("--epochs", type=int, required=True, help="number of training epochs")
     train_parser.add_argument("--batch", type=int, required=True, help="batch size")
     train_parser.add_argument("--lr", type=float, required=True, help="learning rate for optimizer")
-    train_parser.add_argument("--noise_method", type=str, default='none', required=False, help="method of noise injection")
+    train_parser.add_argument("--noise_method", type=str, default='none', required=False, help="method of noise injection (gaussian or pca)")
     train_parser.add_argument("--gauss_low", type=float, required=False, help="lower bound for gaussian noise sampling")
     train_parser.add_argument("--gauss_high", type=float, required=False, help="upper bound for gaussian noise sampling")
     train_parser.add_argument("--noise_scale", type=float, required=False, help="scale factor for pca-based noise sampling")
-    train_parser.add_argument("--exp_name", type=str, required=False, help="name of experiment (appended to formatted name)")
+    train_parser.add_argument("--exp_name", type=str, default='', required=False, help="name of experiment (appended to formatted name)")
     
     # PARSE
     args = parser.parse_args()
@@ -89,7 +89,7 @@ def run_view(args):
 
 def run_train(args):
     from tofmodel.inverse import train
-    train.train_net(args.dataset, args.noisedir, epochs=args.epochs, batch=args.batch, lr=args.lr, noise_method=args.noise_method, 
+    train.train_net(args.dataset, noisedir=args.noisedir, noise_method=args.noise_method, epochs=args.epochs, batch=args.batch, lr=args.lr, 
               gauss_low=args.gauss_low, gauss_high=args.gauss_high, noise_scale=args.noise_scale, exp_name=args.exp_name)
     
     
@@ -161,7 +161,6 @@ def run_inverse(args):
         _sort_inputs()
         _run_simulations()
         _combine_simulations()
-        _cleanup_directories()
 
     elif action == 'prepare_inputs':
         if mode is None:
