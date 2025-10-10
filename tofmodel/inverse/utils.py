@@ -225,36 +225,40 @@ def get_formatted_day_time():
     return formatted_datetime
 
 
-def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, input_feature_length=200, output_feature_length=1000):
-    fraction = s_data_for_nn.shape[0] / input_feature_length
-    nwindows = int(fraction)
-    if nwindows == 0:
-        s_data_for_nn = np.pad(s_data_for_nn, pad_width=((0, input_feature_length-s_data_for_nn.shape[0]), (0, 0)), mode='reflect')
-        nwindows = int(s_data_for_nn.shape[0] / input_feature_length)
-    velocity_NN = np.zeros(nwindows * output_feature_length)
-    for window in range(nwindows):
-        ind1 = window*input_feature_length
-        ind2 = (window+1)*input_feature_length
-        s_window = s_data_for_nn[ind1:ind2, :]
-        
-        # put features in the input array
+def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, input_feature_length=600, output_feature_length=600):
+    n = s_data_for_nn.shape[0]
+    nwindows = n // input_feature_length
+    remainder = n % input_feature_length
+    
+    velocity_NN = np.zeros((nwindows + (1 if remainder > 0 else 0)) * output_feature_length)
+    
+    def run_window(s_window, start_idx):
         x = np.zeros((1, 5, input_feature_length))
         x[0, 0, :] = s_window[:, 0].squeeze()
         x[0, 1, :] = s_window[:, 1].squeeze()
         x[0, 2, :] = s_window[:, 2].squeeze()
         x[0, 3, :] = xarea
         x[0, 4, :] = area
-        
-        # run the tof inverse model using the features as input
         x = torch.tensor(x, dtype=torch.float32)
         y_predicted = NN_model(x).detach().numpy().squeeze()
+        velocity_NN[start_idx:start_idx + output_feature_length] = y_predicted
 
-        ind1_out = window*output_feature_length
-        ind2_out = (window+1)*output_feature_length
-        velocity_NN[ind1_out:ind2_out] = y_predicted
-    if fraction < 1.0:
-        ind_up_to = int(fraction * velocity_NN.shape[0])
-        velocity_NN = velocity_NN[:ind_up_to]
+    # full windows
+    for w in range(nwindows):
+        ind1, ind2 = w * input_feature_length, (w + 1) * input_feature_length
+        run_window(s_data_for_nn[ind1:ind2], w * output_feature_length)
+
+    # leftover window (pad to full length)
+    if remainder > 0:
+        leftover = s_data_for_nn[-remainder:]
+        pad_len = input_feature_length - remainder
+        padded = np.pad(leftover, ((0, pad_len), (0, 0)), mode="reflect")
+        run_window(padded, nwindows * output_feature_length)
+
+        # trim output so it aligns with the true length ratio
+        out_len = int((n / input_feature_length) * output_feature_length)
+        velocity_NN = velocity_NN[:out_len]
+
     return velocity_NN
 
 
