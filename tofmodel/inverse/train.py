@@ -16,7 +16,7 @@ import tofmodel.inverse.evaluation as eval
 import json
 
 
-def train_net(dataset, noisedir, epochs=40, batch=16, lr=0.00001, noise_method=None, 
+def train_net(dataset, noisedir=None, noise_method=None, epochs=40, batch=16, lr=0.00001, 
               gauss_low=0.01, gauss_high=0.1, noise_scale=0.5, exp_name='',
               patience=30, min_delta=1e-4, warmup_epochs=10):
     
@@ -137,32 +137,44 @@ def load_dataset(dataset, noisedir=None, noise_method='none', gauss_low=0.01, ga
     
     with open(dataset, "rb") as f:
         X, y, inputs = pickle.load(f)
-    
-    if noisedir is not None:
+        
+    if noise_method == 'gaussian':
+        print("Adding Gaussian noise...")
+        X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
+        print("Gaussian noise injection complete.")
+
+    elif noise_method == 'pca':
+        if noisedir is None:
+            raise ValueError("noisedir must be provided when using PCA-based noise.")
+
         path_to_noise_data = os.path.join(noisedir, 'noise_data.pkl')
         path_to_pca_model = os.path.join(noisedir, 'pca_model.pkl')
-        if noise_method == 'gaussian':
-            print(f"Adding gaussian noise")
-            X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
-            print('noise injection complete')
-        elif noise_method == 'pca':
-            print(f"Adding pca method noise")
-            if os.path.exists(path_to_pca_model):
-                print(f"Using saved PCA model: {path_to_pca_model}")
-                model = noise.load_pca_model(path_to_pca_model)
-            else:
-                print(f"PCA model not found")
-                print(f"Generating new model using noise data: {path_to_noise_data}")
-                noise_data = noise.load_noise_data(path_to_noise_data)
-                model = noise.define_pca_model(noise_data)
-                print(f"Saving PCA model to: {path_to_pca_model}")
-                noise.save_pca_model(model, path_to_pca_model)
-            X = noise.add_pca_noise(X, model, scalemax=scalemax)
-            print('noise injection complete')
+
+        print("Adding PCA-based noise...")
+
+        if os.path.exists(path_to_pca_model):
+            print(f"Loading existing PCA model from {path_to_pca_model}")
+            model = noise.load_pca_model(path_to_pca_model)
         else:
-            print(f"no noise being added")
-    
-    
+            if not os.path.exists(path_to_noise_data):
+                raise FileNotFoundError(
+                    f"Noise data not found at {path_to_noise_data}. Cannot train PCA model."
+                )
+            print(f"No PCA model found — generating new model from {path_to_noise_data}")
+            noise_data = noise.load_noise_data(path_to_noise_data)
+            model = noise.define_pca_model(noise_data)
+            noise.save_pca_model(model, path_to_pca_model)
+            print(f"PCA model saved to {path_to_pca_model}")
+
+        X = noise.add_pca_noise(X, model, scalemax=scalemax)
+        print("PCA noise injection complete.")
+
+    elif noise_method in [None, '', 'none']:
+        print("No noise method specified — skipping noise injection.")
+
+    else:
+        raise ValueError(f"Unknown noise method: '{noise_method}'")
+        
     nslice_to_use = inputs[0]['param'].nslice_to_use
     
     # scale signals 
