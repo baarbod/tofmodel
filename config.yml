@@ -1,6 +1,5 @@
 
-# output_dir: /path/to/output/folder # all outputs will be defined relative to this directory
-output_dir: /orcd/data/ldlewis/001/om/bashen/repositories/tofmodel/folder # all outputs will be defined relative to this directory
+output_dir: /path/to/output/folder # all outputs will be defined relative to this directory
 dataset_name: dataset
 n_dataset_split: 0
 nslice_to_use: 4
