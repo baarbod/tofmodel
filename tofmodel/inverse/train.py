@@ -16,15 +16,13 @@ import tofmodel.inverse.evaluation as eval
 import json
 
 
-def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None, 
+def train_net(dataset, noisedir, epochs=40, batch=16, lr=0.00001, noise_method=None, 
               gauss_low=0.01, gauss_high=0.1, noise_scale=0.5, exp_name='',
-              patience=20, min_delta=1e-5, warmup_epochs=10):
+              patience=30, min_delta=1e-4, warmup_epochs=10):
     
-    output_dir = param.output_dir
-    dataset_name = param.dataset_name
-    datasetdir = os.path.join(output_dir, dataset_name)
+    datasetdir = os.path.dirname(dataset)
 
-    X_train, X_test, y_train, y_test = load_dataset(param, noise_method=noise_method, 
+    X_train, X_test, y_train, y_test = load_dataset(dataset, noisedir=noisedir, noise_method=noise_method, 
                                                     gauss_low=gauss_low, gauss_high=gauss_high, scalemax=noise_scale)
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     test_dataset = torch.utils.data.TensorDataset(X_test, y_test)
@@ -32,7 +30,9 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch, shuffle=False)
     
     # initialize the model and optimizer
+    num_in_features = X_train.shape[1]
     input_size = X_train.shape[2]
+    num_out_features = y_train.shape[1]
     output_size = y_train.shape[2]
     if torch.cuda.is_available():
         device = torch.device("cuda")
@@ -40,7 +40,7 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
     else:
         device = torch.device("cpu")
         print(f"Running training using CPU")
-    model = TOFinverse(param.data_simulation.num_input_features, param.data_simulation.num_output_features, 
+    model = TOFinverse(num_in_features, num_out_features, 
                        input_size, output_size)
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -48,7 +48,8 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
     print(model)
     
     # Prepare experiment folder
-    folder_root = os.path.join(datasetdir, "experiments")
+    dataset_name = os.path.splitext(os.path.basename(dataset))[0]
+    folder_root = os.path.join(datasetdir, "experiments", dataset_name)
     formatted_datetime = utils.get_formatted_day_time()
     folder_name = f"{formatted_datetime}_training_run_{exp_name}"
     folder = os.path.join(folder_root, folder_name)
@@ -67,7 +68,8 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
         'patience': patience,
         'min_delta': min_delta,
         'warmup_epochs': warmup_epochs,
-        'param_datasetdir': datasetdir
+        'dataset': dataset,
+        'noisedir': noisedir
     }
     with open(os.path.join(folder, 'training_config.json'), 'w') as f:
         json.dump(config, f, indent=4)
@@ -131,44 +133,43 @@ def train_net(param, epochs=40, batch=16, lr=0.00001, noise_method=None,
     print(f"Best validation loss: {best_loss}")
 
 
-def load_dataset(param, noise_method='none', gauss_low=0.01, gauss_high=0.1, scalemax=0.5):
+def load_dataset(dataset, noisedir=None, noise_method='none', gauss_low=0.01, gauss_high=0.1, scalemax=0.1):
     
-    output_dir = param.output_dir
-    dataset_name = param.dataset_name
-    datasetdir = os.path.join(output_dir, dataset_name)
-    path_to_noise_data = os.path.join(output_dir, 'data', 'noise_data.pkl')
-    path_to_pca_model = os.path.join(output_dir, 'data', 'pca_model.pkl')
+    with open(dataset, "rb") as f:
+        X, y, inputs = pickle.load(f)
     
-    pkl_file = next(f for f in os.listdir(datasetdir) if f.endswith('.pkl'))
-    with open(os.path.join(datasetdir, pkl_file), "rb") as f:
-        X, y, _ = pickle.load(f)
-    
-    if noise_method == 'gaussian':
-        print(f"Adding gaussian noise")
-        X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
-        print('noise injection complete')
-    elif noise_method == 'pca':
-        print(f"Adding pca method noise")
-        if os.path.exists(path_to_pca_model):
-            print(f"Using saved PCA model: {path_to_pca_model}")
-            model = noise.load_pca_model(path_to_pca_model)
+    if noisedir is not None:
+        path_to_noise_data = os.path.join(noisedir, 'noise_data.pkl')
+        path_to_pca_model = os.path.join(noisedir, 'pca_model.pkl')
+        if noise_method == 'gaussian':
+            print(f"Adding gaussian noise")
+            X = noise.add_gaussian_noise(X, gauss_low=gauss_low, gauss_high=gauss_high)
+            print('noise injection complete')
+        elif noise_method == 'pca':
+            print(f"Adding pca method noise")
+            if os.path.exists(path_to_pca_model):
+                print(f"Using saved PCA model: {path_to_pca_model}")
+                model = noise.load_pca_model(path_to_pca_model)
+            else:
+                print(f"PCA model not found")
+                print(f"Generating new model using noise data: {path_to_noise_data}")
+                noise_data = noise.load_noise_data(path_to_noise_data)
+                model = noise.define_pca_model(noise_data)
+                print(f"Saving PCA model to: {path_to_pca_model}")
+                noise.save_pca_model(model, path_to_pca_model)
+            X = noise.add_pca_noise(X, model, scalemax=scalemax)
+            print('noise injection complete')
         else:
-            print(f"PCA model not found")
-            print(f"Generating new model using noise data: {path_to_noise_data}")
-            noise_data = noise.load_noise_data(path_to_noise_data)
-            model = noise.define_pca_model(noise_data)
-            print(f"Saving PCA model to: {path_to_pca_model}")
-            noise.save_pca_model(model, path_to_pca_model)
-        X = noise.add_pca_noise(X, model, scalemax=scalemax)
-        print('noise injection complete')
-    else:
-        print(f"no noise being added")
+            print(f"no noise being added")
+    
+    
+    nslice_to_use = inputs[0]['param'].nslice_to_use
     
     # scale signals 
     for i in range(X.shape[0]):
-        to_scale = X[i, 0:3, :].T  # transpose to (time, channels)
+        to_scale = X[i, :nslice_to_use, :].T  # transpose to (time, channels)
         scaled = eval.scale_data(to_scale).T  # scale and transpose back
-        X[i, 0:3, :] = scaled  # overwrite in-place
+        X[i, :nslice_to_use, :] = scaled  # overwrite in-place
     
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1)
     if torch.cuda.is_available():
