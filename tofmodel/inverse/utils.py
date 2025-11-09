@@ -225,59 +225,40 @@ def get_formatted_day_time():
     return formatted_datetime
 
 
-def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area, input_feature_length=600, output_feature_length=600):
-    n = s_data_for_nn.shape[0]
-    nwindows = n // input_feature_length
-    remainder = n % input_feature_length
+def input_batched_signal_into_NN_area(s_data_for_nn, NN_model, xarea, area):
+    ntime = s_data_for_nn.shape[0]
+    num_slice_to_use = s_data_for_nn.shape[1]
+    nfeature = num_slice_to_use + 2 # area takes up last two features
+    feature_length = xarea.size
+    nwindows = ntime // feature_length
+    remainder = ntime % feature_length
     
-    velocity_NN = np.zeros((nwindows + (1 if remainder > 0 else 0)) * output_feature_length)
+    velocity_NN = np.zeros((nwindows + (1 if remainder > 0 else 0)) * feature_length)
     
     def run_window(s_window, start_idx):
-        x = np.zeros((1, 5, input_feature_length))
-        x[0, 0, :] = s_window[:, 0].squeeze()
-        x[0, 1, :] = s_window[:, 1].squeeze()
-        x[0, 2, :] = s_window[:, 2].squeeze()
-        x[0, 3, :] = xarea
-        x[0, 4, :] = area
+        x = np.zeros((1, nfeature, feature_length))
+        for islice in range(num_slice_to_use):
+            x[0, islice, :] = s_window[:, islice].squeeze()
+        x[0, -2, :] = xarea
+        x[0, -1, :] = area
         x = torch.tensor(x, dtype=torch.float32)
         y_predicted = NN_model(x).detach().numpy().squeeze()
-        velocity_NN[start_idx:start_idx + output_feature_length] = y_predicted
+        velocity_NN[start_idx:start_idx + feature_length] = y_predicted
 
     # full windows
     for w in range(nwindows):
-        ind1, ind2 = w * input_feature_length, (w + 1) * input_feature_length
-        run_window(s_data_for_nn[ind1:ind2], w * output_feature_length)
+        ind1, ind2 = w * feature_length, (w + 1) * feature_length
+        run_window(s_data_for_nn[ind1:ind2], w * feature_length)
 
     # leftover window (pad to full length)
     if remainder > 0:
         leftover = s_data_for_nn[-remainder:]
-        pad_len = input_feature_length - remainder
+        pad_len = feature_length - remainder
         padded = np.pad(leftover, ((0, pad_len), (0, 0)), mode="reflect")
-        run_window(padded, nwindows * output_feature_length)
+        run_window(padded, nwindows * feature_length)
 
         # trim output so it aligns with the true length ratio
-        out_len = int((n / input_feature_length) * output_feature_length)
+        out_len = int((ntime / feature_length) * feature_length)
         velocity_NN = velocity_NN[:out_len]
 
     return velocity_NN
-
-
-def mean_pct_portion(x, pct, fromtop=False):
-    # compute the mean top/bottom percent of signal
-
-    x = np.sort(x, axis=0)
-    if fromtop:
-        x = np.flipud(x)
-    num_rows, _ = x.shape
-    n = round(num_rows * pct / 100)
-    return np.mean(x[:n, :], axis=0)
-
-
-def scale_epi(s, startind=0, remove_offset=True):
-    # input csf after loading from file
-    s = s[startind:, :]
-    if remove_offset:
-        s -= mean_pct_portion(s, 5)
-    slice1_maximum = mean_pct_portion(s[:, [0]], 5, fromtop=True)
-    s /= slice1_maximum
-    return s
