@@ -36,9 +36,7 @@ def main():
     sraw, xarea, area = load_data(args.signal, args.area, param)
     s_data_for_nn = scale_data(sraw)
     print("Running velocity inference...")
-    velocity_NN = infer_velocity(model, s_data_for_nn, xarea, area, 
-                                 input_length=param.data_simulation.input_feature_size, 
-                                 output_length=param.data_simulation.output_feature_size)
+    velocity_NN = infer_velocity(model, s_data_for_nn, xarea, area)
     print("Solving forward model using velocity...")
     ssim = run_forward_model(velocity_NN, xarea, area, param)
     
@@ -58,17 +56,17 @@ def main():
     fs = 1 / tr
     f, psd_velocity = welch(velocity_NN, fs=fs)
     fig_psd, [ax1, ax2, ax3] = plt.subplots(nrows=3, ncols=1, figsize=(6, 8))
-    for i in range(3):
+    for i in range(param.nslice_to_use):
         f, psd_sraw = welch(sraw[:, i], fs=fs)
         ax1.plot(f, psd_sraw, label=f"sraw col {i+1}")
-    ax1.set_title("sraw (first 3 columns)")
+    ax1.set_title(f"sraw (first {param.nslice_to_use} columns)")
     ax1.legend()
     ax2.plot(f, psd_velocity, color='black')
     ax2.set_title("velocity_NN")
-    for i in range(3):
+    for i in range(param.nslice_to_use):
         f, psd_sim = welch(ssim[:, i], fs=fs)
         ax3.plot(f, psd_sim, label=f"ssim col {i+1}")
-    ax3.set_title("ssim (first 3 columns)")
+    ax3.set_title(f"ssim (first {param.nslice_to_use} columns)")
     ax3.legend()
     plt.tight_layout()
     plt.show()
@@ -85,7 +83,7 @@ def main():
 
     # compute metrics (uses tr to convert lag to seconds)
     tr = param.scan_param.repetition_time
-    metrics = compute_metrics(sraw_scaled, ssim_scaled, tr=tr, nperseg=256)
+    metrics = compute_metrics(param, sraw_scaled, ssim_scaled, tr=tr, nperseg=256)
 
     # save metrics
     save_metrics_json(metrics, os.path.join(args.outdir, "metrics.json"))
@@ -135,10 +133,10 @@ def load_data(spath, area_path, param):
     x_new = np.linspace(0, 1, new_length)
     xarea_resampled = np.interp(x_new, x_old, xarea)
     area_resampled = np.interp(x_new, x_old, area)
-    return s[num_pulse_baseline_offset:, :3], xarea_resampled, area_resampled
+    return s[num_pulse_baseline_offset:, :param.nslice_to_use], xarea_resampled, area_resampled
 
 
-def scale_data(s, bottom_pct=2.5, top_pct=2.5):
+def scale_data(s, bottom_pct=2.5, top_pct=2.5, divide_by_top=True):
     def mean_pct_portion(x, pct, fromtop=False):
         x_sorted = np.sort(x)
         if fromtop:
@@ -149,8 +147,9 @@ def scale_data(s, bottom_pct=2.5, top_pct=2.5):
     for ch in range(s_copy.shape[1]):
         baseline = mean_pct_portion(s_copy[:, ch], bottom_pct)
         s_copy[:, ch] -= baseline
-    top_val = mean_pct_portion(s_copy[:, 0], top_pct, fromtop=True)
-    s_copy /= top_val
+    if divide_by_top:
+        top_val = mean_pct_portion(s_copy[:, 0], top_pct, fromtop=True)
+        s_copy /= top_val
     return s_copy
     
     
@@ -166,11 +165,8 @@ def load_network(state_filename, param):
     return model
 
 
-def infer_velocity(model, s_data_for_nn, xarea, area, input_length=300, output_length=300):
-    velocity_NN = utils.input_batched_signal_into_NN_area(s_data_for_nn, model, 
-                                                      xarea, area,
-                                                      input_feature_length=input_length, 
-                                                      output_feature_length=output_length)
+def infer_velocity(model, s_data_for_nn, xarea, area):
+    velocity_NN = utils.input_batched_signal_into_NN_area(s_data_for_nn, model, xarea, area)
     return velocity_NN
 
 
@@ -192,12 +188,12 @@ def run_forward_model(velocity_NN, xarea, area, param):
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                         vts=v_with_baseline, xarea=xarea, area=area)
     s_raw = tm.simulate_inflow(tr, te, npulse+num_pulse_baseline_offset, w, fa, t1, t2, nslice, alpha, multi_factor, 
-                                x_func_area, multithread=True, enable_logging=True)[:, 0:3]
-    s = s_raw[num_pulse_baseline_offset:, :]
+                                x_func_area, multithread=True, enable_logging=True)
+    s = s_raw[num_pulse_baseline_offset:, :param.nslice_to_use]
     return s
 
 
-def compute_metrics(x_ref, x_pred, tr=None, nperseg=256):
+def compute_metrics(param, x_ref, x_pred, tr=None, nperseg=256):
 
     ntime = min(x_ref.shape[0], x_pred.shape[0])
     x_ref = x_ref[:ntime, :]
@@ -205,17 +201,35 @@ def compute_metrics(x_ref, x_pred, tr=None, nperseg=256):
 
     nslice = x_ref.shape[1]
     fs = 1.0 / tr
+    
+    # ---- Amplitude weights (based on RMS per slice of the reference signal) ----
+    rms = np.sqrt(np.mean(x_ref**2, axis=0))  # RMS per channel
+    rms[rms == 0] = np.nan  # avoid div-by-zero
+    weights = 1.0 / rms
+    
     per_slice = {}
     summary = {}
     summary_acc = {
-        "MSE": [], "Pearson": [], "R2": [], "PSD_MSE": [], "Lag_sec": []
+        "MSE": [], "MSE_weight": [], "Pearson": [], "R2": [], "PSD_MSE": [], "PSD_MSE_weight": [], "Lag_sec": []
     }
-
+    
+    band_names = []
+    if param is not None and "sampling" in param and hasattr(param.sampling, "bounding_gaussians"):
+        band_names = [g["name"] for g in param.sampling.bounding_gaussians]
+        for band in band_names:
+            summary_acc[f"PSD_MSE_{band}"] = []
+            summary_acc[f"PSD_MSE_{band}_weight"] = []
+    
     for islice in range(nslice):
         ref = x_ref[:, islice]
         pred = x_pred[:, islice]
         residual = ref - pred
+        weight = weights[islice]
+
+        # --- time-domain metrics ---
         mse = np.mean(residual**2)
+        weighted_mse = weight * mse
+        
         pearson = float(np.corrcoef(ref, pred)[0, 1])
         ss_res = np.sum((ref - pred) ** 2)
         ss_tot = np.sum((ref - np.mean(ref)) ** 2)
@@ -224,7 +238,23 @@ def compute_metrics(x_ref, x_pred, tr=None, nperseg=256):
         f_ref, P_ref = welch(ref, fs=fs, nperseg=min(nperseg, len(ref)))
         f_pred, P_pred = welch(pred, fs=fs, nperseg=min(nperseg, len(pred)))
         psd_mse = float(np.mean((P_ref - P_pred) ** 2))
-
+        weighted_psd_mse = weight * psd_mse
+        
+        # --- band-specific PSD errors ---
+        band_psd_mse = {}
+        if band_names:
+            for g in param.sampling.bounding_gaussians:
+                band = g["name"]
+                fmin, fmax = g["freq_range"]
+                mask = (f_ref >= fmin) & (f_ref <= fmax)
+                if np.any(mask):
+                    band_err = np.mean((P_ref[mask] - P_pred[mask]) ** 2)
+                else:
+                    band_err = np.nan
+                band_psd_mse[band] = float(band_err)
+                summary_acc[f"PSD_MSE_{band}"].append(band_err)
+                summary_acc[f"PSD_MSE_{band}_weight"].append(weight * band_err)
+                
         # zero-mean signals for cross-corr
         r = ref - ref.mean()
         p = pred - pred.mean()
@@ -237,17 +267,25 @@ def compute_metrics(x_ref, x_pred, tr=None, nperseg=256):
 
         per_slice[f"slice{islice+1}"] = {
             "MSE": float(mse),
+            "Weighted_MSE": float(weighted_mse),
             "Pearson": None if np.isnan(pearson) else float(pearson),
             "R2": float(r2),
             "PSD_MSE": float(psd_mse),
+            "Weighted_PSD_MSE": float(weighted_psd_mse),
             "Lag_sec": float(lag_sec)
         }
-
+        if band_names:
+            for band, val in band_psd_mse.items():
+                per_slice[f"slice{islice+1}"][f"PSD_MSE_{band}"] = val
+                per_slice[f"slice{islice+1}"][f"Weighted_PSD_MSE_{band}"] = weight * val
+                
         # append to summary accumulators
         summary_acc["MSE"].append(mse)
+        summary_acc["MSE_weight"].append(weight * mse)
         summary_acc["Pearson"].append(np.nan if np.isnan(pearson) else pearson)
         summary_acc["R2"].append(r2)
         summary_acc["PSD_MSE"].append(psd_mse)
+        summary_acc["PSD_MSE_weight"].append(weight * psd_mse)
         summary_acc["Lag_sec"].append(lag_sec)
 
     # compute summary (mean across channels)
@@ -255,6 +293,11 @@ def compute_metrics(x_ref, x_pred, tr=None, nperseg=256):
         vals = np.array(vals, dtype=float)
         summary[k + "_mean"] = float(np.nanmean(vals))
         summary[k + "_std"] = float(np.nanstd(vals))
+
+    # Also compute normalized weighted means for interpretability
+    for metric, weighted_key in [("MSE", "MSE_weight"), ("PSD_MSE", "PSD_MSE_weight")]:
+        wmean = np.nansum(summary_acc[weighted_key]) / np.nansum(weights)
+        summary[metric + "_weighted_mean"] = float(wmean)
 
     return {"per_slice": per_slice, "summary": summary}
 
