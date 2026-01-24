@@ -76,37 +76,10 @@ def get_shared_array(name: str, shape=None):
     return np_array
 
 
-def define_velocity_fourier(t, vcoeff, vfrequencies, vphase, voffset):
-    """ Define a velocity vector based on fourier series parameters
-
-    Parameters
-    ----------
-    t : numpy.ndarray
-        time points to evaluate fourier series
-        
-    vcoeff : list
-        fourier frequency coeffiecients (cm/s)
-        
-    vfrequencies : list
-        frequencies (Hz)
-        
-    vphase : list
-        time-shifts (s) 
-        
-    voffset : float
-        offset velocity (cm/s)
-
-    Returns
-    -------
-    velocity: numpy.ndarray
-        evaluated velocity vector (cm/s)
-    """
-    
-    velocity = np.zeros(np.size(t))
+def define_velocity_fourier(sample_amps, ntimepoint, phase, voffset):
+    famps = sample_amps * np.exp(1j * phase)
+    velocity = np.fft.irfft(famps, ntimepoint)
     velocity += voffset
-    for amp, w, phase in zip(vcoeff, vfrequencies, vphase):
-        vsine = amp*np.cos(2*np.pi*w*(t - phase))
-        velocity += vsine
     return velocity
 
 
