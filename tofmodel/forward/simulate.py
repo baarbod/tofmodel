@@ -118,17 +118,11 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
             optimal_chunksize = 1
         logger.info(f"Using {num_usable_cpu} cores for {nproton} protons (chunksize: {optimal_chunksize})")
         with Pool(processes=num_usable_cpu) as pool:
-            # Use starmap to process the generator
             result = pool.starmap(
                 compute_proton_signal_contribution, 
                 enumerate(params), 
                 chunksize=optimal_chunksize
             )
-        # num_usable_cpu = len(os.sched_getaffinity(0))
-        # optimal_chunksize = int(nproton / (num_usable_cpu * 4))
-        # logger.info(f"using {num_usable_cpu} cpu cores to compute signal contributions")
-        # with Pool(processes=num_usable_cpu) as pool:
-        #     result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
         for s in result:
             signal += s
     else:
