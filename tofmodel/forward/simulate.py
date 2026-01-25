@@ -2,10 +2,12 @@
 
 import time
 import numpy as np
-from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 from multiprocessing import Pool
 import os
 import logging
+from functools import partial
+from tofmodel.forward.fresignal import fre_signal_array as fre_signal
+import math
 
 
 def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, x_func, 
@@ -55,13 +57,13 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
         factor multiplied to the steady state signal contribution, by default 1
 
     rfprofile : str, optional
-        method for rf slice profile, either 'ideal' or 'gaussian'
+        method for rf slice profile, either 'ideal' or 'gaussian' (default)
            
     X_given : numpy.ndarray, optional
         array of proton positions (cm) directly supplied instead of computing in routine, by default None
 
     multithread : bool, optional
-        use mutliple CPU cores, by default True
+        use mutliple CPU cores for both position and signal computation, by default True
     
     enable_logging : bool, optional
         turn on logging messages; if off, only log critical messages, by default False
@@ -70,9 +72,6 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     -------
     signal : numpy.ndarray
         matrix of signal timeseries (a.u.) for each TR/slice
-    
-    Nmatrix : numpy.ndarray, optional
-        matrix of mean number of pulses for each TR/slice
     
     """
     
@@ -89,13 +88,16 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     if X_given is None:
         tstart_pos = time.time()
         lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings_with_repeats), w, nslice)
-        X = compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
+        if multithread:
+            num_cores = len(os.sched_getaffinity(0))
+            X = compute_position_parallel(x_func, timings_with_repeats, lower_bound, upper_bound, dx, num_cores)
+        else:
+            X = compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
         logger.info(f"trimming protons that never touch slices")
         mask = np.any((X > 0) & (X < w * nslice), axis=1)
         X = X[mask]
         logger.info(f"trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
         X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=nslice, enable_logging=enable_logging)
-        # X = increase_proton_density(X, min_proton_count=5)
         logger.info(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given)
@@ -109,10 +111,24 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
                   for iproton in range(nproton))
     if multithread:
         num_usable_cpu = len(os.sched_getaffinity(0))
-        optimal_chunksize = int(nproton / (num_usable_cpu * 4))
-        logger.info(f"using {num_usable_cpu} cpu cores to compute signal contributions")
+        tasks_per_worker = 4
+        if nproton > 0:
+            optimal_chunksize = max(1, math.ceil(nproton / (num_usable_cpu * tasks_per_worker)))
+        else:
+            optimal_chunksize = 1
+        logger.info(f"Using {num_usable_cpu} cores for {nproton} protons (chunksize: {optimal_chunksize})")
         with Pool(processes=num_usable_cpu) as pool:
-            result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
+            # Use starmap to process the generator
+            result = pool.starmap(
+                compute_proton_signal_contribution, 
+                enumerate(params), 
+                chunksize=optimal_chunksize
+            )
+        # num_usable_cpu = len(os.sched_getaffinity(0))
+        # optimal_chunksize = int(nproton / (num_usable_cpu * 4))
+        # logger.info(f"using {num_usable_cpu} cpu cores to compute signal contributions")
+        # with Pool(processes=num_usable_cpu) as pool:
+        #     result = pool.starmap(compute_proton_signal_contribution, enumerate(params), chunksize=optimal_chunksize)    
         for s in result:
             signal += s
     else:
@@ -130,7 +146,6 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     else:
         return signal
 
-
 def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
     num_proton_in_slice = np.zeros((npulse, nslice), dtype=int)
     stride = nslice // multi_factor
@@ -142,7 +157,6 @@ def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
         if np.any(mask):
             num_proton_in_slice[ipulse, :] = np.bincount(slices_at_tr[mask], minlength=nslice)
     return num_proton_in_slice
-
 
 def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=10, maxiter=200, enable_logging=False):
     if enable_logging:
@@ -173,13 +187,22 @@ def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_c
         logger.info(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
     return X
 
-
 def compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx):
     x0 = np.arange(lower_bound, upper_bound, dx)
     X = x_func(np.unique(timings_with_repeats), x0)
     return X
 
-            
+def compute_position_parallel(x_func, timings, lower_bound, upper_bound, dx, num_cores=None):
+    if num_cores is None:
+        num_cores = len(os.sched_getaffinity(0))
+    x0_full = np.arange(lower_bound, upper_bound, dx)
+    chunks = np.array_split(x0_full, num_cores)
+    unique_timings = np.unique(timings)
+    worker_func = partial(x_func, unique_timings)
+    with Pool(processes=num_cores) as pool:
+        results = pool.map(worker_func, chunks)
+    return np.vstack(results)
+    
 def increase_position_matrix_density(X, thres):
     diffs = np.diff(X, axis=0)
     max_dx_for_pair = diffs.max(axis=1)
@@ -190,7 +213,6 @@ def increase_position_matrix_density(X, thres):
     Xnew = np.vstack([X, X_new_curves])
     Xnew_sorted = Xnew[np.argsort(Xnew[:, 0])]
     return Xnew_sorted
-
 
 def get_init_position_bounds(x_func, timings, w, nslice):
     """ Optimally define bounds of proton initial positions 
@@ -242,7 +264,6 @@ def get_init_position_bounds(x_func, timings, w, nslice):
     upper_bound *= 1.5
     lower_bound *= 1.5
     return lower_bound, upper_bound
-
 
 def compute_proton_signal_contribution(iproton, params):
     npulse_total, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile = params
