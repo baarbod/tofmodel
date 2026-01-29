@@ -11,7 +11,7 @@ import math
 
 
 def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, x_func, 
-                    dx=0.01, offset_fact=1, varysliceprofile=True, X_given=None, multithread=False, enable_logging=False):
+                    dx=0.01, offset_fact=1, varysliceprofile=True, X_given=None, ncpu=1, enable_logging=False):
     
     """ Routine for simulating inflow signals
 
@@ -85,10 +85,18 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     alpha = np.array(alpha, ndmin=2).T
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
     timings_with_repeats, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
+    
+    # determine number of cores to use
+    cpu_count = len(os.sched_getaffinity(0))
+    if ncpu == -1:
+        use_cores = cpu_count
+    else:
+        use_cores = int(ncpu)
+        
     if X_given is None:
         tstart_pos = time.time()
         lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings_with_repeats), w, nslice)
-        if multithread:
+        if use_cores > 1:
             num_cores = len(os.sched_getaffinity(0))
             X = compute_position_parallel(x_func, timings_with_repeats, lower_bound, upper_bound, dx, num_cores)
         else:
@@ -97,7 +105,7 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
         mask = np.any((X > 0) & (X < w * nslice), axis=1)
         X = X[mask]
         logger.info(f"trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
-        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=nslice, enable_logging=enable_logging)
+        X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=10, enable_logging=enable_logging)
         logger.info(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given)
@@ -109,15 +117,14 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     signal = np.zeros([npulse, nslice])
     params = ((npulse, nslice, X[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile)
                   for iproton in range(nproton))
-    if multithread:
-        num_usable_cpu = len(os.sched_getaffinity(0))
+    if use_cores > 1:
         tasks_per_worker = 4
         if nproton > 0:
-            optimal_chunksize = max(1, math.ceil(nproton / (num_usable_cpu * tasks_per_worker)))
+            optimal_chunksize = max(1, math.ceil(nproton / (use_cores * tasks_per_worker)))
         else:
             optimal_chunksize = 1
-        logger.info(f"Using {num_usable_cpu} cores for {nproton} protons (chunksize: {optimal_chunksize})")
-        with Pool(processes=num_usable_cpu) as pool:
+        logger.info(f"Using {use_cores} cores for {nproton} protons (chunksize: {optimal_chunksize})")
+        with Pool(processes=use_cores) as pool:
             result = pool.starmap(
                 compute_proton_signal_contribution, 
                 enumerate(params), 
