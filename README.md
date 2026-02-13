@@ -17,4 +17,4 @@ The inverse module in this repository was our older implementation and was limit
 
 Please see my other repository "tofinv" for using the pipeline.
 
-The inverse module here will probably be removed as features are ported to tofinv, and in the future this will be where the forward model implementation is kept.
+The inverse module here will probably be removed as features are ported to tofinv, and in the future this will just be where the forward model implementation is kept.
