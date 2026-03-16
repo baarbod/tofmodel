@@ -273,84 +273,14 @@ def get_init_position_bounds(x_func, timings, w, nslice):
     lower_bound *= 1.5
     return lower_bound, upper_bound
 
-
-# def compute_proton_signal_contribution(iproton, params):
-#     npulse_total, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile = params
-#     s_proton_contribution = np.zeros([npulse_total, nslice], dtype=np.float32)
-    
-#     proton_pos = np.repeat(Xproton, multi_factor)
-#     proton_slice = np.floor(proton_pos / w).astype(np.int16)
-
-#     if varysliceprofile:
-#         # Define the three zones that can affect the proton
-#         w_offsets = np.array([-w, 0, w], dtype=np.float32)
-#         pulse_lists = [
-#             np.where(proton_slice == pulse_slice - 1)[0], # behind
-#             np.where(proton_slice == pulse_slice)[0],     # target
-#             np.where(proton_slice == pulse_slice + 1)[0]  # front
-#         ]
-        
-#         mask = proton_slice[pulse_lists[2]] < nslice
-#         pulse_lists[2] = pulse_lists[2][mask]
-#     else:
-#         pulse_lists = [np.where(proton_slice == pulse_slice)[0]]
-#         w_offsets = [0]
-
-#     for pulse_indices, w_offset in zip(pulse_lists, w_offsets):
-#         tprev = -1.0
-#         dt_list = np.zeros(pulse_indices.size)
-        
-#         for count, pulse_id in enumerate(pulse_indices):
-#             t_curr = timings_with_repeats[pulse_id]
-#             dt_list[count] = t_curr - tprev if count > 0 else 0.0
-#             tprev = t_curr
-#             n_seen = count + 1
-            
-#             if varysliceprofile:
-#                 pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
-#                 dist_from_center = pos_in_slice - (w / 2)
-                
-#                 # --- SINC PULSE IMPLEMENTATION ---
-#                 # Normalize x so that the first zero-crossing is at the slice edge (w/2)
-#                 x = (np.pi * dist_from_center) / (w / 2)
-                
-#                 if dist_from_center == 0:
-#                     sinc_val = 1.0
-#                 else:
-#                     sinc_val = np.sin(x) / x
-                
-#                 # Apply a Hamming window to truncate tails (standard in MRI)
-#                 # This window spans 3 slices total (-1.5w to 1.5w)
-#                 window = 0.54 + 0.46 * np.cos(np.pi * dist_from_center / (1.5 * w))
-                
-#                 k = sinc_val * window
-#                 # --------------------------------
-                
-#                 s = fre_signal(n_seen, k * fa, tr, te, t1, t2, dt_list[:n_seen], offset_fact=offset_fact)
-#             else:
-#                 s = fre_signal(n_seen, fa, tr, te, t1, t2, dt_list[:n_seen], offset_fact=offset_fact)
-            
-#             target_tr = pulse_tr_actual[pulse_id]
-#             target_slc = proton_slice[pulse_id]
-    
-#             if 0 <= target_slc < nslice:
-#                 s_proton_contribution[target_tr, target_slc] += np.float32(s)
-                
-#     return s_proton_contribution
-
-
 def compute_proton_signal_contribution(iproton, params):
-    # Unpack parameters
     npulse_total, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile = params
     
-    # Initialize output
     s_proton_contribution = np.zeros([npulse_total, nslice], dtype=np.float32)
     
-    # Proton Positioning
     proton_pos = np.repeat(Xproton, multi_factor)
     proton_slice = np.floor(proton_pos / w).astype(np.int16)
 
-    # Define Zones (Target slice + 1 neighbor on each side)
     if varysliceprofile:
         w_offsets = np.array([-w, 0, w], dtype=np.float32)
         pulse_lists = [
@@ -359,89 +289,41 @@ def compute_proton_signal_contribution(iproton, params):
             np.where(proton_slice == pulse_slice + 1)[0]  # front
         ]
         
-        # Safety mask for the 'front' slice to ensure we don't exceed array bounds
         mask = proton_slice[pulse_lists[2]] < nslice
         pulse_lists[2] = pulse_lists[2][mask]
         
-        # --- BWTP PARAMETERS ---
-        # BWTP 5.2 = 5.2 total zero crossings = 2.6 per side.
-        # Slice width 'w' is defined by the 1st zero crossing (at w/2).
-        # Cutoff distance = 2.6 * (w/2) = 1.3 * w.
         bwtp_cutoff_factor = 1.3 
     else:
         pulse_lists = [np.where(proton_slice == pulse_slice)[0]]
         w_offsets = [0]
         bwtp_cutoff_factor = 0 # Not used
-
-    # Pre-calculate constant decay
     exp_te_t2 = np.exp(-te / t2)
 
-    # --- MAIN PULSE LOOP ---
     for pulse_indices, w_offset in zip(pulse_lists, w_offsets):
-        
-        # Reset Magnetization for this set of pulses
-        # We assume full relaxation (M0=1.0) before the first pulse in this list
+
         mz_current = 1.0 
         tprev = -1.0 
 
         for count, pulse_id in enumerate(pulse_indices):
             t_curr = timings_with_repeats[pulse_id]
-            
-            # 1. RELAXATION (Time Propagation)
+
             if count == 0:
                 dt = 0.0 
             else:
                 dt = t_curr - tprev
-            
-            # Apply T1 recovery: Mz(t) = 1 + (Mz_start - 1) * exp(-dt/T1)
+
             if dt > 0:
                 exp_dt_t1 = np.exp(-dt / t1)
                 mz_current = 1.0 + (mz_current - 1.0) * exp_dt_t1
-            
-            # 2. DETERMINE FLIP ANGLE (Slice Profile)
-            # if varysliceprofile:
-            #     # Calculate distance from the center of the current pulse's slice
-            #     pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
-            #     dist_from_center = pos_in_slice - (w / 2)
-                
-            #     # Check if proton is within the Bandwidth-Time Product cutoff
-            #     cutoff_dist = bwtp_cutoff_factor * w
-                
-            #     if abs(dist_from_center) < cutoff_dist:
-            #         # Sinc Calculation
-            #         if dist_from_center == 0:
-            #             sinc_val = 1.0
-            #         else:
-            #             # Normalize x so first zero is at w/2
-            #             x = (np.pi * dist_from_center) / (w / 2)
-            #             sinc_val = np.sin(x) / x
-                    
-            #         # Hamming Window 
-            #         # Scaled to go to the edge of the cutoff (2.6 lobes)
-            #         window = 0.54 + 0.46 * np.cos(np.pi * dist_from_center / cutoff_dist)
-                    
-            #         current_fa = sinc_val * window * fa
-            #     else:
-            #         current_fa = 0.0 # Outside the pulse bandwidth
-            # else:
-            #     current_fa = fa
-
-            # 2. DETERMINE FLIP ANGLE (Slice Profile)
             if varysliceprofile:
-                # Calculate distance from the center of the current pulse's slice
-                # (Your existing relative positioning logic here is brilliant and works perfectly)
                 pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
                 dist_from_center = pos_in_slice - (w / 2)
                 
-                # --- SPATIAL FERMI FUNCTION ---
                 # 'a' controls the edge sharpness (transition band). 
                 # a = w / 20.0 closely mimics a Hamming-windowed Sinc with BWTP 5.2
                 a = w / 20.0 
-                
-                # Calculate the normalized spatial profile (0.0 to 1.0)
                 fermi_val = 1.0 / (1.0 + np.exp((abs(dist_from_center) - (w / 2.0)) / a))
                 
-                # Optimization: Only apply if the proton experiences a meaningful flip angle (> 0.1% of nominal)
                 if fermi_val > 0.001:
                     current_fa = fermi_val * fa
                 else:
@@ -449,14 +331,10 @@ def compute_proton_signal_contribution(iproton, params):
             else:
                 current_fa = fa
 
-            # 3. COMPUTE SIGNAL & UPDATE STATE
-            # Only process if there is a flip angle (optimization)
             if current_fa != 0:
                 sin_alpha = np.sin(current_fa)
                 cos_alpha = np.cos(current_fa)
 
-                # Steady State Subtraction (Your specific requirement)
-                # Note: Assuming pulse_tr_actual is accessible by pulse_id
                 tr_val = pulse_tr_actual[pulse_id] if isinstance(pulse_tr_actual, np.ndarray) else tr
                 exp_tr_t1_ss = np.exp(-tr_val / t1)
                 
@@ -465,22 +343,11 @@ def compute_proton_signal_contribution(iproton, params):
                     mz_ss = offset_fact * (1.0 - exp_tr_t1_ss) / denom
                 else:
                     mz_ss = 0.0
-
-                # Signal = Mz_available * sin(alpha) * T2_decay - SteadyState_term
-                # Note: We apply the subtraction exactly as you had it: (Mz - Mz_ss)
                 s = sin_alpha * exp_te_t2 * (mz_current - mz_ss)
-                
-                # Update Mz: Tip the remaining magnetization
                 mz_current = mz_current * cos_alpha
             else:
                 s = 0.0
-                # Mz remains unchanged if FA is 0
-            
-            # Update history
             tprev = t_curr
-            
-            # 4. STORE RESULT
-            # Map global pulse_id to the output array format
             target_tr_idx = int(pulse_tr_actual[pulse_id]) 
             target_slc = proton_slice[pulse_id]
     
@@ -488,64 +355,6 @@ def compute_proton_signal_contribution(iproton, params):
                 s_proton_contribution[target_tr_idx, target_slc] += np.float32(s)
                 
     return s_proton_contribution
-
-
-
-
-
-
-## ORIGNAL
-
-# def compute_proton_signal_contribution(iproton, params):
-#     npulse_total, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile = params
-#     s_proton_contribution = np.zeros([npulse_total, nslice], dtype=np.float32)
-    
-#     proton_pos = np.repeat(Xproton, multi_factor)
-#     proton_slice = np.floor(proton_pos / w).astype(np.int16)
-
-#     if varysliceprofile:
-#         # Define the three zones that can affect the proton
-#         w_offsets = np.array([-w, 0, w], dtype=np.float32)
-#         pulse_lists = [
-#             np.where(proton_slice == pulse_slice - 1)[0], # behind
-#             np.where(proton_slice == pulse_slice)[0],     # target
-#             np.where(proton_slice == pulse_slice + 1)[0]  # front
-#         ]
-        
-#         # Only keep 'front' pulses if the proton is still within the stack
-#         mask = proton_slice[pulse_lists[2]] < nslice
-#         pulse_lists[2] = pulse_lists[2][mask]
-#     else:
-#         pulse_lists = [np.where(proton_slice == pulse_slice)[0]]
-#         w_offsets = [0]
-
-#     # Main Signal Loop
-#     for pulse_indices, w_offset in zip(pulse_lists, w_offsets):
-#         tprev = -1.0
-#         dt_list = np.zeros(pulse_indices.size)
-        
-#         for count, pulse_id in enumerate(pulse_indices):
-#             t_curr = timings_with_repeats[pulse_id]
-#             dt_list[count] = t_curr - tprev if count > 0 else 0.0
-#             tprev = t_curr
-
-#             n_seen = count + 1
-            
-#             if varysliceprofile:
-#                 pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
-#                 dist_from_center = pos_in_slice - (w / 2)
-#                 # Gaussian RF scaling
-#                 k = np.exp(-0.5 * (dist_from_center / (w / 2))**2)
-#                 s = fre_signal(n_seen, k * fa, tr, te, t1, t2, dt_list[:n_seen], offset_fact=offset_fact)
-#             else:
-#                 s = fre_signal(n_seen, fa, tr, te, t1, t2, dt_list[:n_seen], offset_fact=offset_fact)
-#             target_tr = pulse_tr_actual[pulse_id]
-#             target_slc = proton_slice[pulse_id]
-    
-#             if 0 <= target_slc < nslice:
-#                 s_proton_contribution[target_tr, target_slc] += np.float32(s)
-                
-#     return s_proton_contribution
 
 def get_pulse_targets(tr, nslice, npulse, alpha):
     tr_vect = np.arange(npulse) * tr
