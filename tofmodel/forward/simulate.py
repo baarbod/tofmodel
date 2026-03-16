@@ -11,7 +11,7 @@ import math
 
 
 def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, x_func, 
-                    dx=0.005, offset_fact=1, varysliceprofile=True, X_given=None, ncpu=1, enable_logging=False):
+                    dx=0.005, offset_fact=0, varysliceprofile=True, X_given=None, ncpu=1, enable_logging=False):
     
     """ Routine for simulating inflow signals
 
