@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tofmodel"
+version = "2.0.0"
+description = "Model for simulating fMRI inflow signals"
+requires-python = ">=3.8"
+dependencies = [
+    matplotlib==3.10.8
+    numba==0.60.0
+    numpy==2.4.3
+    omegaconf==2.3.0
+    scikit_learn==1.8.0
+    scipy==1.17.1
+    setuptools==65.5.0
+    setuptools==69.5.1
+    torch==2.5.1
+]
