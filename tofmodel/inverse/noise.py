@@ -17,6 +17,8 @@ def add_pca_noise(X, model, nslice=3, scalemax=1.5):
     noise = sample_noise(X, model)
     noise_scaled = scale_noise(X, noise, scalemax=scalemax)
     X[:, :nslice, :] += noise_scaled
+    
+    # X[:, :nslice, :] += sample_noise(X, model)
     return X
 
 

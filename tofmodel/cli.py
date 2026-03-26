@@ -38,6 +38,8 @@ def main():
     train_parser.add_argument("--gauss_high", type=float, required=False, help="upper bound for gaussian noise sampling")
     train_parser.add_argument("--noise_scale", type=float, required=False, help="scale factor for pca-based noise sampling")
     train_parser.add_argument("--exp_name", type=str, default='', required=False, help="name of experiment (appended to formatted name)")
+    train_parser.add_argument("--lambda_phys", type=float, default=1, required=False)
+    train_parser.add_argument("--surrogate_path", type=str, default='surrogate_model_weights.pth', required=False)
     
     # PARSE
     args = parser.parse_args()
@@ -90,7 +92,8 @@ def run_view(args):
 def run_train(args):
     from tofmodel.inverse import train
     train.train_net(args.dataset, noisedir=args.noisedir, noise_method=args.noise_method, epochs=args.epochs, batch=args.batch, lr=args.lr, 
-              gauss_low=args.gauss_low, gauss_high=args.gauss_high, noise_scale=args.noise_scale, exp_name=args.exp_name)
+              gauss_low=args.gauss_low, gauss_high=args.gauss_high, noise_scale=args.noise_scale, exp_name=args.exp_name, 
+              lambda_phys=args.lambda_phys, surrogate_path=args.surrogate_path)
     
     
 def print_message(action, mode, taskid, param):

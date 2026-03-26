@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 from multiprocessing import Pool
-import multiprocessing.shared_memory as msm
 from functools import partial
 from scipy.interpolate import interp1d
 import numpy as np
@@ -110,6 +109,7 @@ def define_sample_area(param, dirs=None):
     elif area_param.mode == 'collection':
         path_to_collection = os.path.join(dirs['data'], 'area_collection')
         files = sorted(os.listdir(path_to_collection))
+        files = [f for f in files if f.endswith('.txt')]
         if not files:
             logger.error(f"No area files found in {path_to_collection}")
             raise FileNotFoundError(f"No valid area files in {path_to_collection}")
@@ -119,7 +119,22 @@ def define_sample_area(param, dirs=None):
         x, a = area_data[:, 0], area_data[:, 1]
         scale = np.random.uniform(low=area_param.area_scale_lower, high=area_param.area_scale_upper)
         offset = np.random.uniform(low=area_param.slc1_offset_lower, high=area_param.slc1_offset_upper)
-        widest_position = x[np.argmax(a)]
+        
+        
+        # NEEDS TO BE IMPLEMENTED MORE CLEANLY
+        # Define how many points to exclude from the ends
+        N = 20  # Replace with your desired value or pull from config
+        # Ensure N isn't so large that it empties the array
+        if len(a) > 2 * N:
+            # Find argmax only within the sliced central portion
+            # We add N back to the result to get the index relative to the original array
+            central_widest_idx = np.argmax(a[N:-N]) + N
+            print(central_widest_idx)
+            widest_position = x[central_widest_idx]
+        else:
+            widest_position = x[np.argmax(a)] # Fallback if array is too short
+        # widest_position = x[np.argmax(a)]
+        
         x, a = x-widest_position-offset, scale * a  
     def resample(x, y, n):
         f = interp1d(x, y, kind='linear', fill_value='extrapolate')
@@ -138,16 +153,41 @@ def define_input_params(num_sample, param, dirs, task_id):
         path_to_velocity_kde = os.path.join(dirs['data'], 'velocity_kde.pkl')
         with open(path_to_velocity_kde, 'rb') as f:
             kdes = pickle.load(f)
+    elif sp.mode == 'crudekde':
+        # path_to_kde_amp = os.path.join(dirs['data'], 'crude_velocity_pca_model.pkl')
+        # with open(path_to_kde_amp, 'rb') as f:
+        #     pca_model = pickle.load(f)
+        
+        path_to_v_amp_data = os.path.join(dirs['data'], 'crude_optim_velocity_amps.pkl')
+        with open(path_to_v_amp_data, 'rb') as f:
+            Vamp_all = pickle.load(f)
+        
+        
+        # path_to_kde_off = os.path.join(dirs['data'], 'crude_velocity_kde_off.pkl')
+        # with open(path_to_kde_off, 'rb') as f:
+        #     kde_off = pickle.load(f)
     elif sp.mode == 'uniform':
         kdes = None
     
     ds = param.data_simulation
-    frequencies = np.arange(ds.frequency_start, ds.frequency_end, ds.frequency_spacing)
+    # frequencies = np.arange(ds.frequency_start, ds.frequency_end, ds.frequency_spacing)
+    frequencies = np.fft.rfftfreq(ds.input_feature_size, d=0.378)
     for _ in range(num_sample):
-        bounds = get_sampling_bounds(frequencies, sp.bounding_gaussians, sp.lower_fact, sp.upper_fact, sp.global_offset, kdes=kdes)
-        amplitude = np.random.uniform(bounds[:, 0], bounds[:, 1])
-        phase = np.random.uniform(low=0, high=1/frequencies)
-        voff = np.random.uniform(low=sp.voffset_lower, high=sp.voffset_upper)
+        
+        # new approach
+        # 1) randomly choose a velocity amplitude vector from optimized
+        # 2) assign random phase and velocity offset
+        random_idx = np.random.randint(0, Vamp_all.shape[0])
+        amplitude = Vamp_all[random_idx, :]
+        
+        # synth_coeffs = pca_model['kde_coeffs'].resample(1).T 
+        # sample_amps = (synth_coeffs @ pca_model['pca_components']) + pca_model['pca_mean']
+        # amplitude = np.maximum(sample_amps.squeeze(), 1e-9)
+        
+        # bounds = get_sampling_bounds(frequencies, sp.bounding_gaussians, sp.lower_fact, sp.upper_fact, sp.global_offset, kdes=kdes)
+        # amplitude = np.array([kde.resample(1).squeeze() for kde in kdes_amp])#np.random.uniform(bounds[:, 0], bounds[:, 1])
+        phase = np.random.uniform(0, 2*np.pi, frequencies.size)#np.random.uniform(low=0, high=1/frequencies)
+        voff = 0#np.random.uniform(-0.3, 0.3)# voff = 0 #kde_off.resample(1).squeeze()#np.random.uniform(low=sp.voffset_lower, high=sp.voffset_upper)
         xarea, area = define_sample_area(param, dirs=dirs)
         
         batch_size = ds.num_samples // ds.num_batches
@@ -176,8 +216,9 @@ def compute_sample_init_positions(isample, input_data):
     """Compute initial spatial positions for protons based on velocity and area profile."""
 
     p = input_data['param'].scan_param
-    t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
-    v = utils.define_velocity_fourier(t, input_data['velocity_input'], input_data['frequencies'], input_data['rand_phase'], input_data['v_offset'])
+    v = utils.define_velocity_fourier(input_data['velocity_input'], p.num_pulse, input_data['rand_phase'], input_data['v_offset'])
+    v = utils.upsample(v, v.size*100+1, p.repetition_time).flatten()
+    t = np.arange(0, p.repetition_time*p.num_pulse, p.repetition_time/100)
     t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                         vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
@@ -204,28 +245,31 @@ def simulate_parameter_set(isample, inputs, batch_dir):
     sample_file = os.path.join(batch_subdir, f"sample_{isample:03}.pkl")
     
     try:
-        logger.info(f"Starting simulation {isample} in batch {input_data['task_id']}")
+        # logger.info(f"Starting simulation {isample} in batch {input_data['task_id']}")
         sys.stdout.flush()
         p = input_data['param'].scan_param
-        t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
-        v = utils.define_velocity_fourier(t, input_data['velocity_input'], 
-                                        input_data['frequencies'], input_data['rand_phase'], 
-                                        input_data['v_offset'])
-        t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v, p.repetition_time*p.num_pulse_baseline_offset)
+        
+        # t = np.arange(0, p.num_pulse*p.repetition_time, p.repetition_time/100)
+        # v = utils.define_velocity_fourier(t, input_data['velocity_input'], 
+        #                                 input_data['frequencies'], input_data['rand_phase'], 
+        #                                 input_data['v_offset'])
+        v_original = utils.define_velocity_fourier(input_data['velocity_input'], p.num_pulse, input_data['rand_phase'], input_data['v_offset'])
+        v_upsample = utils.upsample(v_original, v_original.size*100+1, p.repetition_time).flatten()
+        t = np.arange(0, p.repetition_time*p.num_pulse, p.repetition_time/100)
+        
+        t_with_baseline, v_with_baseline = utils.add_baseline_period(t, v_upsample, p.repetition_time*p.num_pulse_baseline_offset)
         x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                             vts=v_with_baseline, xarea=input_data['xarea_sample'], area=input_data['area_sample'])
         s_raw = tm.simulate_inflow(p.repetition_time, p.echo_time, p.num_pulse+p.num_pulse_baseline_offset, 
                                 p.slice_width, p.flip_angle, p.t1_time, p.t2_time, p.num_slice, p.alpha_list, 
-                                p.MBF, x_func_area, multithread=False)[:, :input_data['param'].nslice_to_use]
+                                p.MBF, x_func_area)[:, :input_data['param'].nslice_to_use]
         s = s_raw[p.num_pulse_baseline_offset:, :]
-        
-        v_downsampled = utils.downsample(v, input_data['param'].data_simulation.output_feature_size)
-        
+            
         # ---- save sample ----
         with open(sample_file, "wb") as f:
             pickle.dump({
                 'X': s,
-                'v': v_downsampled,
+                'v': v_original,
                 'xarea': input_data['xarea_sample'],
                 'area': input_data['area_sample'],
                 'input': input_data
@@ -236,7 +280,7 @@ def simulate_parameter_set(isample, inputs, batch_dir):
             writer = csv.writer(pf)
             writer.writerow([isample, s.shape[0], "done"])
 
-        logger.info(f"Finished simulation {isample} in batch {input_data['task_id']}, saved to {sample_file}")
+        # logger.info(f"Finished simulation {isample} in batch {input_data['task_id']}, saved to {sample_file}")
         sys.stdout.flush()
         
     except Exception as e:
@@ -278,7 +322,7 @@ def combine_simulations(param, dirs):
     """Combine all simulated batches into one dataset and save to output directory."""
     
     logger = logging.getLogger(__name__)
-    X_final, y_final, inputs_final = [], [], []
+    X_final, y_final = [], []
 
     # Find all batch directories
     batch_dirs = sorted(
@@ -312,7 +356,6 @@ def combine_simulations(param, dirs):
                 # Append to final lists
                 X_final.append(xx)
                 y_final.append(yy)
-                inputs_final.append(data['input'])
                 
             except Exception as e:
                 logger.warning(f"Failed to load {sample_path}: {e}")
@@ -335,22 +378,22 @@ def combine_simulations(param, dirs):
             rand_ind = np.random.choice(total_samples, n_keep, replace=False)
             X_sub = X_final[rand_ind]
             y_sub = y_final[rand_ind]
-            inputs_sub = [inputs_final[i] for i in rand_ind]
 
             sub_file = os.path.join(dirs['dataset'], f"dataset_{n_keep}_samples.pkl")
             with open(sub_file, "wb") as f:
-                pickle.dump([X_sub, y_sub, inputs_sub], f)
+                pickle.dump([X_sub, y_sub], f)
 
             logger.info(f"Saved split {k}/{N}: {sub_file} "
-                        f"(X: {X_sub.shape}, y: {y_sub.shape}, inputs: {len(inputs_sub)})")
+                        f"(X: {X_sub.shape}, y: {y_sub.shape})")
     else:
         # Save combined dataset
-        output_file = os.path.join(dirs['dataset'], f"dataset_{total_samples}_samples.pkl")
+        # output_file = os.path.join(dirs['dataset'], f"dataset_{total_samples}_samples.pkl")
+        output_file = os.path.join(dirs['dataset'], "dataset.pkl")
         with open(output_file, "wb") as f:
-            pickle.dump([X_final, y_final, inputs_final], f)
+            pickle.dump([X_final, y_final], f)
 
         logger.info(f"Combined dataset saved to {output_file}")
-        logger.info(f"X shape: {X_final.shape}, y shape: {y_final.shape}, inputs: {len(inputs_final)}")
+        logger.info(f"X shape: {X_final.shape}, y shape: {y_final.shape}")
 
 def cleanup_directories(dirs):
     """Remove temporary directories used during simulation."""

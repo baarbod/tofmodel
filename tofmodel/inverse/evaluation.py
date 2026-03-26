@@ -30,25 +30,57 @@ def main():
     if not os.path.exists(args.outdir):
         os.makedirs(args.outdir)
     
+    def mean_pct_portion(x, pct, fromtop=False):
+        x_sorted = np.sort(x)
+        if fromtop:
+            x_sorted = x_sorted[::-1]
+        n = max(1, round(len(x_sorted) * pct / 100))
+        return np.mean(x_sorted[:n])
+
+    def scale_data_baseline(s):
+        s_copy = s.copy()
+        for ch in range(s_copy.shape[1]):
+            baseline = mean_pct_portion(s_copy[:, ch], 2.5)
+            s_copy[:, ch] -= baseline
+            s_copy[:, ch] /= baseline
+        return s_copy
+
+    def scale_sim_baseline(s, baseline):
+        return s/baseline
+    
+    
     print("Loading data...")
     param = OmegaConf.load(args.config)
     model = load_network(args.model, param)
     sraw, xarea, area = load_data(args.signal, args.area, param)
-    s_data_for_nn = scale_data(sraw)
+    # s_data_for_nn = scale_data(sraw)
+    s_data_for_nn = scale_data_baseline(sraw)
     print("Running velocity inference...")
     velocity_NN = infer_velocity(model, s_data_for_nn, xarea, area)
     print("Solving forward model using velocity...")
     ssim = run_forward_model(velocity_NN, xarea, area, param)
     
+    sin_fa = np.sin(param.scan_param.flip_angle * np.pi / 180)
+    cos_fa = np.cos(param.scan_param.flip_angle * np.pi / 180)
+    exp_tr_t1 = np.exp(-param.scan_param.repetition_time / param.scan_param.t1_time)
+    exp_te_t2 = np.exp(-param.scan_param.echo_time / param.scan_param.t2_time)
+    mT_ss =  sin_fa * exp_te_t2 * (1 - exp_tr_t1) / (1 - exp_tr_t1 * cos_fa)
+    
+    
     print("Plotting results...")
     trvect = param.scan_param.repetition_time*np.arange(velocity_NN.size)
     
+    # sraw_scaled = scale_data(sraw)
+    # ssim_scaled = scale_data(ssim)
+    sraw_scaled = scale_data_baseline(sraw)
+    ssim_scaled = scale_sim_baseline(ssim, mT_ss)
+    
     # time domain plot
     fig_td, [ax1, ax2, ax3] = plt.subplots(nrows=3, ncols=1)
-    ax1.plot(trvect, sraw[:velocity_NN.size])
+    ax1.plot(trvect, sraw_scaled[:velocity_NN.size])
     ax2.plot(trvect, velocity_NN, color='black')
     ax2.axhline(y=0, color='gray', linestyle='--', zorder=0)
-    ax3.plot(trvect, ssim)
+    ax3.plot(trvect, ssim_scaled)
     plt.tight_layout()
     plt.show()
     
@@ -57,14 +89,14 @@ def main():
     f, psd_velocity = welch(velocity_NN, fs=fs)
     fig_psd, [ax1, ax2, ax3] = plt.subplots(nrows=3, ncols=1, figsize=(6, 8))
     for i in range(param.nslice_to_use):
-        f, psd_sraw = welch(sraw[:, i], fs=fs)
+        f, psd_sraw = welch(sraw_scaled[:, i], fs=fs)
         ax1.plot(f, psd_sraw, label=f"sraw col {i+1}")
     ax1.set_title(f"sraw (first {param.nslice_to_use} columns)")
     ax1.legend()
     ax2.plot(f, psd_velocity, color='black')
     ax2.set_title("velocity_NN")
     for i in range(param.nslice_to_use):
-        f, psd_sim = welch(ssim[:, i], fs=fs)
+        f, psd_sim = welch(ssim_scaled[:, i], fs=fs)
         ax3.plot(f, psd_sim, label=f"ssim col {i+1}")
     ax3.set_title(f"ssim (first {param.nslice_to_use} columns)")
     ax3.legend()
@@ -77,9 +109,6 @@ def main():
     np.savetxt(os.path.join(args.outdir, 'velocity_predicted.txt'), velocity_NN)
     np.savetxt(os.path.join(args.outdir, 'signal_data.txt'), sraw)
     np.savetxt(os.path.join(args.outdir, 'signal_simulation.txt'), ssim)
-
-    sraw_scaled = scale_data(sraw)
-    ssim_scaled = scale_data(ssim)
 
     # compute metrics (uses tr to convert lag to seconds)
     tr = param.scan_param.repetition_time
@@ -170,7 +199,7 @@ def infer_velocity(model, s_data_for_nn, xarea, area):
     return velocity_NN
 
 
-def run_forward_model(velocity_NN, xarea, area, param):
+def run_forward_model(velocity_NN, xarea, area, param, ncpu=8):
     tr = param.scan_param.repetition_time
     te = param.scan_param.echo_time
     w = param.scan_param.slice_width
@@ -188,7 +217,7 @@ def run_forward_model(velocity_NN, xarea, area, param):
     x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t_with_baseline, 
                         vts=v_with_baseline, xarea=xarea, area=area)
     s_raw = tm.simulate_inflow(tr, te, npulse+num_pulse_baseline_offset, w, fa, t1, t2, nslice, alpha, multi_factor, 
-                                x_func_area, multithread=True, enable_logging=True)
+                                x_func_area, ncpu=ncpu, enable_logging=True)
     s = s_raw[num_pulse_baseline_offset:, :param.nslice_to_use]
     return s
 

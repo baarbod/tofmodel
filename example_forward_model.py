@@ -32,7 +32,7 @@ v = a*np.sin(2*np.pi*f*t) # velocity time-series [cm/s]
 
 # RUN SIMULATION
 x_func_area = partial(pfl.compute_position_numeric_spatial, tr_vect=t, vts=v, xarea=xarea, area=area)
-signal = tm.simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha_list, MBF, x_func_area, multithread=False)
+signal = tm.simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha_list, MBF, x_func_area, ncpu=1)
 tr_vect = tr*np.arange(0, signal.shape[0])
 
 # PLOTTING SIGNAL IN THE FIRST 4 SLICES
