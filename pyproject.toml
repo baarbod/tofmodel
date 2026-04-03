@@ -17,3 +17,6 @@ dependencies = [
     "setuptools==69.5.1",
     "torch==2.5.1"
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
