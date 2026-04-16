@@ -1,5 +1,5 @@
 
-This repository contains the modeling framework for quantifying cerebrospinal fluid (CSF) flow velocity from fMRI inflow signals.
+This repository contains the modeling framework for simulating fMRI inflow signals from an input velocity timeseries.
 Please see our paper which describes the methodology:
 
 **Ashenagar et al., 2025**  
@@ -9,12 +9,39 @@ See the [v1.0 tag](https://github.com/baarbod/tofmodel/releases/tag/v1.0) for th
 v1.0 is uploaded for reference to the exact methods used in the paper.
 However, please use the latest version for improved usability and broader compatibility.
 
+The forward model in this repository is used in my other repository (tofinv). If you need to estimate velocity from inflow signals (i.e. inverse problem) please see tofinv.
 
-NOTE:
+See example_forward_model.py for details on usage of the forward model. 
 
-The inverse module for this project is being superseded by my other repository (tofinv) which will implement an end-to-end automated pipeline for extracting velocities from the fMRI data.
-The inverse module in this repository was our older implementation and was limited in that it required some manual tweaking and would be somewhat tedious to use.
 
-Please see my other repository "tofinv" for using the pipeline.
+### Installation
 
-The inverse module here will probably be removed as features are ported to tofinv, and in the future this will just be where the forward model implementation is kept.
+Create a new directory (optional but recommended)
+```bash
+mkdir -p repos
+cd repos
+```
+If you already have a python environment, you can skip the next couple of steps. \
+To create an isolated Python virtual environment, run the following command (replace `python3.10` with your specific path if needed):
+```bash
+python3.10 -m venv .venv
+```
+Then activate the environment
+```bash
+source .venv/bin/activate
+``` 
+
+Clone the repository
+```bash
+git clone https://github.com/baarbod/tofmodel.git
+```
+Navigate into the cloned repository
+```bash
+cd tofmodel
+```
+Install the package and all dependencies
+```bash
+pip install .
+```
+
+
