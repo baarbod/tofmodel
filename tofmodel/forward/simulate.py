@@ -76,11 +76,11 @@ def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, 
     """
     
     # set up logging configuration
-    if enable_logging:
-        logging.basicConfig(level=logging.INFO)
-    else:
-        logging.disable(logging.CRITICAL)  # Disable all logging
     logger = logging.getLogger(__name__)
+    if enable_logging:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.CRITICAL + 1)
     fa = fa * np.pi / 180
     alpha = np.array(alpha, ndmin=2).T
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
@@ -167,11 +167,11 @@ def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
     return num_proton_in_slice
 
 def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=10, maxiter=200, enable_logging=False):
-    if enable_logging:
-        logging.basicConfig(level=logging.INFO)
-    else:
-        logging.disable(logging.CRITICAL)
     logger = logging.getLogger(__name__)
+    if enable_logging:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.CRITICAL + 1)
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
     ind_sparse = np.where(num_proton_in_slice[:, :uptoslc] < min_proton_count)
     if ind_sparse[0].size > 0:
