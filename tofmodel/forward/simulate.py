@@ -1,158 +1,149 @@
-# -*- coding: utf-8 -*-
-
 import time
 import numpy as np
 from multiprocessing import Pool
 import os
 import logging
-from functools import partial
-from tofmodel.forward.fresignal import fre_signal_array as fre_signal
 import math
-
+from functools import partial
+import numba
+from numba import njit, prange
 
 def simulate_inflow(tr, te, npulse, w, fa, t1, t2, nslice, alpha, multi_factor, x_func, 
                     dx=0.005, offset_fact=0, varysliceprofile=True, X_given=None, ncpu=1, enable_logging=False):
-    
-    """ Routine for simulating inflow signals
-
-    Parameters
-    ----------
-    tr : float
-        repetition time (s)
-
-    te : float
-        repetition time (s)
-        
-    npulse : int
-        total number of TR cycles to simulate
-        
-    w : float
-        slice thickness (cm)
-        
-    fa : float
-        flip angle (degrees)
-        
-    t1 : float
-        T1 time constant for flowing fluid (s)
-        
-    t2 : float
-        T2 time constant for flowing fluid (s)  
-        
-    nslice : int
-        number of imaging slices
-        
-    alpha : list
-        slice timing for each slice which should have length same as nslice (s)
-        
-    multi_factor : int
-        multi-band factor
-        
-    x_func : func
-        position (cm) as a function of time (s) and initial position (cm)
-    
-    dx : float, optional
-        distance between initalized protons (cm), by default 0.01
-    
-    offset_fact : int, optional
-        factor multiplied to the steady state signal contribution, by default 1
-
-    rfprofile : str, optional
-        method for rf slice profile, either 'ideal' or 'gaussian' (default)
-           
-    X_given : numpy.ndarray, optional
-        array of proton positions (cm) directly supplied instead of computing in routine, by default None
-
-    multithread : bool, optional
-        use mutliple CPU cores for both position and signal computation, by default True
-    
-    enable_logging : bool, optional
-        turn on logging messages; if off, only log critical messages, by default False
-        
-    Returns
-    -------
-    signal : numpy.ndarray
-        matrix of signal timeseries (a.u.) for each TR/slice
-    
-    """
-    
-    # set up logging configuration
     logger = logging.getLogger(__name__)
     if enable_logging:
         logger.setLevel(logging.INFO)
     else:
         logger.setLevel(logging.CRITICAL + 1)
-    fa = fa * np.pi / 180
+    fa = fa * np.pi / 180.0
     alpha = np.array(alpha, ndmin=2).T
     assert np.size(alpha) == nslice, 'Warning: size of alpha should be nslice'
     timings_with_repeats, pulse_slice = get_pulse_targets(tr, nslice, npulse, alpha)
     timings_with_repeats = timings_with_repeats.astype(np.float32)
-    
-    # determine number of cores to use
     cpu_count = len(os.sched_getaffinity(0))
-    if ncpu == -1:
-        use_cores = cpu_count
-    else:
-        use_cores = int(ncpu)
-        
+    use_cores = cpu_count if ncpu == -1 else int(ncpu)
+    numba.set_num_threads(use_cores)
     if X_given is None:
         tstart_pos = time.time()
         lower_bound, upper_bound = get_init_position_bounds(x_func, np.unique(timings_with_repeats), w, nslice)
         if use_cores > 1:
-            num_cores = len(os.sched_getaffinity(0))
-            X = compute_position_parallel(x_func, timings_with_repeats, lower_bound, upper_bound, dx, num_cores)
+            X = compute_position_parallel(x_func, timings_with_repeats, lower_bound, upper_bound, dx, use_cores)
         else:
             X = compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx)
-        logger.info(f"trimming protons that never touch slices")
+        logger.info(f"Trimming protons that never touch slices")
         mask = np.any((X > 0) & (X < w * nslice), axis=1)
         X = X[mask]
-        logger.info(f"trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
+        logger.info(f"Trimmed position bounds: ({X[0, 0]:.3f}, {X[-1, 0]:.3f}) cm")
         X = increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_count=5, uptoslc=10, enable_logging=enable_logging)
         X = X.astype(np.float32)
-        logger.info(f'position calculation time: {time.time() - tstart_pos:.2f} seconds')
+        logger.info(f'Position calculation time: {time.time() - tstart_pos:.2f} seconds')
     else:
         X = np.array(X_given, dtype=np.float32)
-        logger.info('using given proton positions. Skipping calculation...')
+        logger.info('Using given proton positions. Skipping calculation...')
     nproton = X.shape[0]
-    
-    matrix_size_gb = (npulse * nslice * 8) / (1024**3)
-    total_estimated_gb = nproton * matrix_size_gb
-    logger.info(f'Total estimate memory: {total_estimated_gb:.2f}GB')
-    
-    logger.info('running simulation with ' + str(nproton) + ' protons...')
-    pulse_tr_actual = match_pulse_to_tr(npulse, nslice)
+    logger.info(f'Running simulation with {nproton} protons using {use_cores} Numba threads...')
+    X_expanded = np.repeat(X, multi_factor, axis=1).astype(np.float32)
+    pulse_tr_actual = match_pulse_to_tr(npulse, nslice).astype(np.int32)
+    pulse_slice = pulse_slice.astype(np.int32)
     tstart_sim = time.time()
-    signal = np.zeros([npulse, nslice], dtype=np.float32)
-    params = ((npulse, nslice, X[iproton, :], multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile)
-                  for iproton in range(nproton))
-    if use_cores > 1:
-        tasks_per_worker = 4
-        if nproton > 0:
-            optimal_chunksize = max(1, math.ceil(nproton / (use_cores * tasks_per_worker)))
-        else:
-            optimal_chunksize = 1
-        logger.info(f"Using {use_cores} cores for {nproton} protons (chunksize: {optimal_chunksize})")
-        with Pool(processes=use_cores) as pool:
-            result = pool.starmap(
-                compute_proton_signal_contribution, 
-                enumerate(params), 
-                chunksize=optimal_chunksize
-            )
-        for s in result:
-            signal += s
-    else:
-        logger.info(f"using 1 cpu core")
-        for iproton, p in enumerate(params):
-            signal += compute_proton_signal_contribution(iproton, p)           
-    logger.info(f'total simulation time: {time.time() - tstart_sim:.2f} seconds')
+    signals_all = compute_all_signals_numba(
+        X_expanded, npulse, nslice, timings_with_repeats, 
+        float(w), float(fa), float(tr), float(te), float(t1), float(t2), 
+        pulse_slice, pulse_tr_actual, float(offset_fact), bool(varysliceprofile)
+    )
+    signal = np.sum(signals_all, axis=0)
+    logger.info(f'Total simulation time: {time.time() - tstart_sim:.2f} seconds')
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
-    signal = np.divide(signal, num_proton_in_slice, out=np.zeros_like(signal), where=num_proton_in_slice != 0)
-    try:
-        assert not np.isnan(signal[:, :nslice]).any(), 'Warning: NaN values found in signal array'
-        assert not np.isinf(signal[:, :nslice]).any(), 'Warning: Inf values found in signal array'
-    except AssertionError as error:
-        print(error)
-    else:
-        return signal
+    signal = np.divide(
+        signal, 
+        num_proton_in_slice.astype(np.float32), 
+        out=np.zeros_like(signal), 
+        where=num_proton_in_slice != 0
+    )
+    if np.isnan(signal[:, :nslice]).any() or np.isinf(signal[:, :nslice]).any():
+        raise ValueError('Invalid numerical bounds (NaN/Inf) detected in signal matrix.')
+    return signal
+
+@njit(parallel=True, fastmath=True)
+def compute_all_signals_numba(X_expanded, npulse_total, nslice, timings_with_repeats, 
+                              w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, 
+                              offset_fact, varysliceprofile):
+    nproton = X_expanded.shape[0]
+    N_targets = len(timings_with_repeats)
+    signals_all = np.zeros((nproton, npulse_total, nslice), dtype=np.float32)
+    exp_te_t2 = math.exp(-te / t2)
+    exp_tr_t1_ss = math.exp(-tr / t1)
+    for i in prange(nproton):
+        proton_pos = X_expanded[i, :]
+        t_entry = -1.0
+        for p_id in range(N_targets):
+            p_pos = proton_pos[p_id]
+            p_slc = int(math.floor(p_pos / w))
+            target_slc = pulse_slice[p_id]
+            is_valid = False
+            if varysliceprofile:
+                if (p_slc == target_slc - 1) or (p_slc == target_slc) or (p_slc == target_slc + 1 and p_slc < nslice):
+                    is_valid = True
+            else:
+                if p_slc == target_slc:
+                    is_valid = True
+                    
+            if is_valid and (0 <= p_slc < nslice):
+                t_entry = timings_with_repeats[p_id]
+                break
+        if t_entry < 0:
+            continue
+        mz_current = 1.0 
+        tprev = -1.0
+        for p_id in range(N_targets):
+            p_pos = proton_pos[p_id]
+            p_slc = int(math.floor(p_pos / w))
+            target_slc = pulse_slice[p_id]
+            w_offset = 0.0
+            is_valid = False
+            if varysliceprofile:
+                if p_slc == target_slc - 1:
+                    w_offset = -w
+                    is_valid = True
+                elif p_slc == target_slc:
+                    w_offset = 0.0
+                    is_valid = True
+                elif p_slc == target_slc + 1 and p_slc < nslice:
+                    w_offset = w
+                    is_valid = True
+            else:
+                if p_slc == target_slc:
+                    is_valid = True  
+            if not is_valid:
+                continue
+            t_curr = timings_with_repeats[p_id]
+            if t_curr < (t_entry - 3.0 * t1):
+                continue
+            dt = 0.0 if tprev < 0 else (t_curr - tprev)
+            if dt > 0:
+                mz_current = 1.0 + (mz_current - 1.0) * math.exp(-dt / t1)
+            if varysliceprofile:
+                pos_in_slice = (p_pos % w) + w_offset
+                dist_from_center = pos_in_slice - (w / 2.0)
+                a = w / 20.0 
+                fermi_val = 1.0 / (1.0 + math.exp((abs(dist_from_center) - (w / 2.0)) / a))
+                current_fa = fermi_val * fa if fermi_val > 0.001 else 0.0
+            else:
+                current_fa = fa 
+            if current_fa != 0.0:
+                sin_alpha = math.sin(current_fa)
+                cos_alpha = math.cos(current_fa)
+                denom = (1.0 - exp_tr_t1_ss * cos_alpha)
+                mz_ss = offset_fact * (1.0 - exp_tr_t1_ss) / denom if abs(denom) > 1e-12 else 0.0
+                s = sin_alpha * exp_te_t2 * (mz_current - mz_ss)
+                mz_current = mz_current * cos_alpha
+            else:
+                s = 0.0  
+            tprev = t_curr
+            target_tr_idx = pulse_tr_actual[p_id]
+            if 0 <= p_slc < nslice:
+                signals_all[i, target_tr_idx, p_slc] += np.float32(s)
+    return signals_all
 
 def compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor):
     num_proton_in_slice = np.zeros((npulse, nslice), dtype=int)
@@ -175,24 +166,18 @@ def increase_proton_density(X, npulse, nslice, w, multi_factor, dx, min_proton_c
     num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
     ind_sparse = np.where(num_proton_in_slice[:, :uptoslc] < min_proton_count)
     if ind_sparse[0].size > 0:
-        logger.info(f"initial proton count is {X.shape[0]}")
-        logger.info(f"found {ind_sparse[0].size} TR cycles with less than {min_proton_count} protons within the first {uptoslc} slices")
-        logger.info(f"running density increase algorithm...")
+        logger.info(f"Initial proton count is {X.shape[0]}")
         count = 0
         while ind_sparse[0].size > 0:
             count += 1
             if count > maxiter:
                 logger.info(f"WARNING: reached max count iter of {maxiter}")
-                logger.info(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
-                logger.info(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
                 return X
-            thres = w / min_proton_count # threshold distance between adjacent position curves for increasing proton density
+            thres = w / min_proton_count
             X = increase_position_matrix_density(X, thres) 
             num_proton_in_slice = compute_slice_pulse_particle_counts(X, npulse, nslice, w, multi_factor)
             ind_sparse = np.where(num_proton_in_slice < min_proton_count)
-        logger.info(f"finished after {count} iterations")
-        logger.info(f"{ind_sparse[0].size} TR cycles have less than {min_proton_count} protons")
-        logger.info(f"minimum TR cycle proton count is {num_proton_in_slice.min()}")
+        logger.info(f"Finished after {count} iterations")
     return X
 
 def compute_position(x_func, timings_with_repeats, lower_bound, upper_bound, dx):
@@ -219,37 +204,13 @@ def increase_position_matrix_density(X, thres):
         return X
     X_new_curves = (X[ind_gap] + X[ind_gap + 1]) / 2.0
     Xnew = np.vstack([X, X_new_curves])
-    Xnew_sorted = Xnew[np.argsort(Xnew[:, 0])]
-    return Xnew_sorted
+    return Xnew[np.argsort(Xnew[:, 0])]
 
 def get_init_position_bounds(x_func, timings, w, nslice):
-    """ Optimally define bounds of proton initial positions 
-
-    Parameters
-    ----------
-    x_func : func
-        position (cm) as a function of time (s) and initial position (cm)
-        
-    timings : numpy.ndarray
-        array of times to evaluate position
-        
-    w : float
-        slice thickness (cm)
-        
-    nslice : int
-        number of imaging slices
-
-    Returns
-    -------
-    lower_bound, upper_bound: float
-        values for the lowest and highest initial proton positions 
-    """
-
     def does_x_touch_slices(x):
         return ((x < w*nslice) & (x > 0)).any()
-
     max_iter = 200
-    dt = 0.1
+    dt = 0.25 
     timings = np.arange(timings.min(), timings.max(), dt)
     upper_bound = w*nslice + 0.01
     x = x_func(timings, np.array(upper_bound, ndmin=1))
@@ -259,7 +220,8 @@ def get_init_position_bounds(x_func, timings, w, nslice):
         upper_bound += np.abs(dx_downward) / 5
         x = x_func(timings, np.array(upper_bound, ndmin=1))
         counter += 1
-        assert counter < max_iter, f'Warning: counter={counter} for finding upper bound exceeded limit'
+        if counter >= max_iter:
+            raise RuntimeError(f'Counter={counter} for finding upper bound exceeded limit')  
     lower_bound = -w*nslice
     x = x_func(timings, np.array(lower_bound, ndmin=1))
     counter = 0
@@ -268,89 +230,9 @@ def get_init_position_bounds(x_func, timings, w, nslice):
         lower_bound -= np.abs(dx_upward) / 5
         x = x_func(timings, np.array(lower_bound, ndmin=1))
         counter += 1
-        assert counter < max_iter, f'Warning: counter={counter} for finding lower bound exceeded limit'
-    upper_bound *= 1.5
-    lower_bound *= 1.5
-    return lower_bound, upper_bound
-
-def compute_proton_signal_contribution(iproton, params):
-    npulse_total, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile = params
-    s_proton_contribution = np.zeros([npulse_total, nslice], dtype=np.float32)
-    proton_pos = np.repeat(Xproton, multi_factor)
-    proton_slice = np.floor(proton_pos / w).astype(np.int16)
-    if varysliceprofile:
-        idx_behind = np.where(proton_slice == pulse_slice - 1)[0]
-        idx_target = np.where(proton_slice == pulse_slice)[0]
-        idx_front = np.where(proton_slice == pulse_slice + 1)[0]
-        mask = proton_slice[idx_front] < nslice
-        idx_front = idx_front[mask]
-        all_indices = np.concatenate([idx_behind, idx_target, idx_front])
-        all_offsets = np.concatenate([
-            np.full(len(idx_behind), -w, dtype=np.float32),
-            np.zeros(len(idx_target), dtype=np.float32),
-            np.full(len(idx_front), w, dtype=np.float32)
-        ])
-        sort_order = np.argsort(all_indices)
-        pulse_indices = all_indices[sort_order]
-        pulse_offsets = all_offsets[sort_order]
-    else:
-        pulse_indices = np.where(proton_slice == pulse_slice)[0]
-        pulse_offsets = np.zeros(len(pulse_indices), dtype=np.float32)
-    slices_at_pulses = proton_slice[pulse_indices]
-    valid_slice_mask = (slices_at_pulses >= 0) & (slices_at_pulses < nslice)
-    if np.any(valid_slice_mask):
-        first_entry_idx = np.where(valid_slice_mask)[0][0]
-        t_entry = timings_with_repeats[pulse_indices[first_entry_idx]]
-        t_pulses = timings_with_repeats[pulse_indices]
-        keep_mask = (t_pulses >= (t_entry - 3.0 * t1))
-        pulse_indices = pulse_indices[keep_mask]
-        pulse_offsets = pulse_offsets[keep_mask]
-    else:
-        pulse_indices = np.array([], dtype=np.int64)
-        pulse_offsets = np.array([], dtype=np.float32)
-    exp_te_t2 = np.exp(-te / t2)
-    mz_current = 1.0 
-    tprev = -1.0 
-    for count, (pulse_id, w_offset) in enumerate(zip(pulse_indices, pulse_offsets)):
-        t_curr = timings_with_repeats[pulse_id]
-        if count == 0:
-            dt = 0.0 
-        else:
-            dt = t_curr - tprev
-        if dt > 0:
-            exp_dt_t1 = np.exp(-dt / t1)
-            mz_current = 1.0 + (mz_current - 1.0) * exp_dt_t1
-        if varysliceprofile:
-            pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
-            dist_from_center = pos_in_slice - (w / 2)
-            a = w / 20.0 
-            fermi_val = 1.0 / (1.0 + np.exp((abs(dist_from_center) - (w / 2.0)) / a))
-            if fermi_val > 0.001:
-                current_fa = fermi_val * fa
-            else:
-                current_fa = 0.0
-        else:
-            current_fa = fa
-        if current_fa != 0:
-            sin_alpha = np.sin(current_fa)
-            cos_alpha = np.cos(current_fa)
-            tr_val = tr 
-            exp_tr_t1_ss = np.exp(-tr_val / t1)
-            denom = (1.0 - exp_tr_t1_ss * cos_alpha)
-            if abs(denom) > 1e-12:
-                mz_ss = offset_fact * (1.0 - exp_tr_t1_ss) / denom
-            else:
-                mz_ss = 0.0
-            s = sin_alpha * exp_te_t2 * (mz_current - mz_ss)
-            mz_current = mz_current * cos_alpha
-        else:
-            s = 0.0
-        tprev = t_curr
-        target_tr_idx = int(pulse_tr_actual[pulse_id]) 
-        target_slc = proton_slice[pulse_id]
-        if 0 <= target_slc < nslice:
-            s_proton_contribution[target_tr_idx, target_slc] += np.float32(s)
-    return s_proton_contribution
+        if counter >= max_iter:
+            raise RuntimeError(f'Counter={counter} for finding lower bound exceeded limit')     
+    return lower_bound * 1.5, upper_bound * 1.5
 
 def get_pulse_targets(tr, nslice, npulse, alpha):
     tr_vect = np.arange(npulse) * tr
@@ -366,5 +248,3 @@ def get_pulse_targets(tr, nslice, npulse, alpha):
 
 def match_pulse_to_tr(npulse, nslice):
     return np.repeat(np.arange(npulse), nslice).astype(int)
-
-
