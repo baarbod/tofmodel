@@ -275,85 +275,81 @@ def get_init_position_bounds(x_func, timings, w, nslice):
 
 def compute_proton_signal_contribution(iproton, params):
     npulse_total, nslice, Xproton, multi_factor, timings_with_repeats, w, fa, tr, te, t1, t2, pulse_slice, pulse_tr_actual, offset_fact, varysliceprofile = params
-    
     s_proton_contribution = np.zeros([npulse_total, nslice], dtype=np.float32)
-    
     proton_pos = np.repeat(Xproton, multi_factor)
     proton_slice = np.floor(proton_pos / w).astype(np.int16)
-
     if varysliceprofile:
-        w_offsets = np.array([-w, 0, w], dtype=np.float32)
-        pulse_lists = [
-            np.where(proton_slice == pulse_slice - 1)[0], # behind
-            np.where(proton_slice == pulse_slice)[0],     # target
-            np.where(proton_slice == pulse_slice + 1)[0]  # front
-        ]
-        
-        mask = proton_slice[pulse_lists[2]] < nslice
-        pulse_lists[2] = pulse_lists[2][mask]
-        
-        bwtp_cutoff_factor = 1.3 
+        idx_behind = np.where(proton_slice == pulse_slice - 1)[0]
+        idx_target = np.where(proton_slice == pulse_slice)[0]
+        idx_front = np.where(proton_slice == pulse_slice + 1)[0]
+        mask = proton_slice[idx_front] < nslice
+        idx_front = idx_front[mask]
+        all_indices = np.concatenate([idx_behind, idx_target, idx_front])
+        all_offsets = np.concatenate([
+            np.full(len(idx_behind), -w, dtype=np.float32),
+            np.zeros(len(idx_target), dtype=np.float32),
+            np.full(len(idx_front), w, dtype=np.float32)
+        ])
+        sort_order = np.argsort(all_indices)
+        pulse_indices = all_indices[sort_order]
+        pulse_offsets = all_offsets[sort_order]
     else:
-        pulse_lists = [np.where(proton_slice == pulse_slice)[0]]
-        w_offsets = [0]
-        bwtp_cutoff_factor = 0 # Not used
+        pulse_indices = np.where(proton_slice == pulse_slice)[0]
+        pulse_offsets = np.zeros(len(pulse_indices), dtype=np.float32)
+    slices_at_pulses = proton_slice[pulse_indices]
+    valid_slice_mask = (slices_at_pulses >= 0) & (slices_at_pulses < nslice)
+    if np.any(valid_slice_mask):
+        first_entry_idx = np.where(valid_slice_mask)[0][0]
+        t_entry = timings_with_repeats[pulse_indices[first_entry_idx]]
+        t_pulses = timings_with_repeats[pulse_indices]
+        keep_mask = (t_pulses >= (t_entry - 3.0 * t1))
+        pulse_indices = pulse_indices[keep_mask]
+        pulse_offsets = pulse_offsets[keep_mask]
+    else:
+        pulse_indices = np.array([], dtype=np.int64)
+        pulse_offsets = np.array([], dtype=np.float32)
     exp_te_t2 = np.exp(-te / t2)
-
-    for pulse_indices, w_offset in zip(pulse_lists, w_offsets):
-
-        mz_current = 1.0 
-        tprev = -1.0 
-
-        for count, pulse_id in enumerate(pulse_indices):
-            t_curr = timings_with_repeats[pulse_id]
-
-            if count == 0:
-                dt = 0.0 
+    mz_current = 1.0 
+    tprev = -1.0 
+    for count, (pulse_id, w_offset) in enumerate(zip(pulse_indices, pulse_offsets)):
+        t_curr = timings_with_repeats[pulse_id]
+        if count == 0:
+            dt = 0.0 
+        else:
+            dt = t_curr - tprev
+        if dt > 0:
+            exp_dt_t1 = np.exp(-dt / t1)
+            mz_current = 1.0 + (mz_current - 1.0) * exp_dt_t1
+        if varysliceprofile:
+            pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
+            dist_from_center = pos_in_slice - (w / 2)
+            a = w / 20.0 
+            fermi_val = 1.0 / (1.0 + np.exp((abs(dist_from_center) - (w / 2.0)) / a))
+            if fermi_val > 0.001:
+                current_fa = fermi_val * fa
             else:
-                dt = t_curr - tprev
-
-            if dt > 0:
-                exp_dt_t1 = np.exp(-dt / t1)
-                mz_current = 1.0 + (mz_current - 1.0) * exp_dt_t1
-            if varysliceprofile:
-                pos_in_slice = (proton_pos[pulse_id] % w) + w_offset
-                dist_from_center = pos_in_slice - (w / 2)
-                
-                # 'a' controls the edge sharpness (transition band). 
-                # a = w / 20.0 closely mimics a Hamming-windowed Sinc with BWTP 5.2
-                a = w / 20.0 
-                fermi_val = 1.0 / (1.0 + np.exp((abs(dist_from_center) - (w / 2.0)) / a))
-                
-                if fermi_val > 0.001:
-                    current_fa = fermi_val * fa
-                else:
-                    current_fa = 0.0
+                current_fa = 0.0
+        else:
+            current_fa = fa
+        if current_fa != 0:
+            sin_alpha = np.sin(current_fa)
+            cos_alpha = np.cos(current_fa)
+            tr_val = tr 
+            exp_tr_t1_ss = np.exp(-tr_val / t1)
+            denom = (1.0 - exp_tr_t1_ss * cos_alpha)
+            if abs(denom) > 1e-12:
+                mz_ss = offset_fact * (1.0 - exp_tr_t1_ss) / denom
             else:
-                current_fa = fa
-
-            if current_fa != 0:
-                sin_alpha = np.sin(current_fa)
-                cos_alpha = np.cos(current_fa)
-
-                tr_val = pulse_tr_actual[pulse_id] if isinstance(pulse_tr_actual, np.ndarray) else tr
-                exp_tr_t1_ss = np.exp(-tr_val / t1)
-                
-                denom = (1.0 - exp_tr_t1_ss * cos_alpha)
-                if abs(denom) > 1e-12:
-                    mz_ss = offset_fact * (1.0 - exp_tr_t1_ss) / denom
-                else:
-                    mz_ss = 0.0
-                s = sin_alpha * exp_te_t2 * (mz_current - mz_ss)
-                mz_current = mz_current * cos_alpha
-            else:
-                s = 0.0
-            tprev = t_curr
-            target_tr_idx = int(pulse_tr_actual[pulse_id]) 
-            target_slc = proton_slice[pulse_id]
-    
-            if 0 <= target_slc < nslice:
-                s_proton_contribution[target_tr_idx, target_slc] += np.float32(s)
-                
+                mz_ss = 0.0
+            s = sin_alpha * exp_te_t2 * (mz_current - mz_ss)
+            mz_current = mz_current * cos_alpha
+        else:
+            s = 0.0
+        tprev = t_curr
+        target_tr_idx = int(pulse_tr_actual[pulse_id]) 
+        target_slc = proton_slice[pulse_id]
+        if 0 <= target_slc < nslice:
+            s_proton_contribution[target_tr_idx, target_slc] += np.float32(s)
     return s_proton_contribution
 
 def get_pulse_targets(tr, nslice, npulse, alpha):
